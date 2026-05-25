@@ -1,54 +1,104 @@
 name: Release
 
 on:
-  pull_request:
-    types: [closed]
-    branches: [main]
+  push:
+    tags:
+      - 'v*'
 
 permissions:
   contents: write
 
 jobs:
   release:
-    # Only run when a release/* branch PR is merged (not just closed)
-    if: >-
-      github.event.pull_request.merged == true &&
-      startsWith(github.event.pull_request.head.ref, 'release/')
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           fetch-depth: 0
 
-      - name: Extract version from branch name
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+
+      - name: Extract version from tag
         id: version
         run: |
-          BRANCH="${{ github.event.pull_request.head.ref }}"
-          VERSION="${BRANCH#release/}"
+          TAG="${{ github.ref_name }}"
+          VERSION="${TAG#v}"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-          echo "Extracted version: $VERSION"
+          echo "Extracted version: $VERSION from tag: $TAG"
 
       - name: Validate version format
         run: |
-          VERSION="${{ steps.version.outputs.version }}"
-          if [[ ! "$VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z]+(\.[0-9]+)?)?$ ]]; then
-            echo "Error: Invalid version format '$VERSION'"
+          TAG="${{ steps.version.outputs.tag }}"
+          if [[ ! "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z]+(\.[0-9]+)?)?$ ]]; then
+            echo "Error: Invalid tag format '$TAG'"
             echo "Expected format: vX.Y.Z or vX.Y.Z-pre.N"
             exit 1
           fi
 
-      - name: Create annotated tag
+      - name: Validate changelog entry
         run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git tag -a "${{ steps.version.outputs.version }}" \
-            -m "Release ${{ steps.version.outputs.version }}"
-          git push origin "${{ steps.version.outputs.version }}"
+          bash scripts/changelog.sh validate "${{ steps.version.outputs.version }}"
+          bash scripts/changelog.sh validate-release-notes "${{ steps.version.outputs.version }}"
 
-      - name: Create GitHub Release
+      - name: Extract release notes from changelog
+        run: bash scripts/changelog.sh extract "${{ steps.version.outputs.version }}" RELEASE_NOTES.md
+
+      - name: Validate API generator outputs are up to date
+        run: go run ./cmd/internal/cobragen check
+
+      - name: Mapping and validator unit tests
+        run: go test ./internal/apimeta/... -count=1
+
+      - name: Build release artifacts
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          COMMIT: ${{ github.sha }}
+        run: |
+          mkdir -p dist
+          BUILD_TIME="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          LDFLAGS="-s -w -X main.Version=${VERSION} -X main.Commit=${COMMIT} -X main.BuildTime=${BUILD_TIME}"
+          for target in linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/amd64; do
+            GOOS="${target%/*}"
+            GOARCH="${target#*/}"
+            ext=""
+            bin="agr"
+            if [ "$GOOS" = "windows" ]; then ext=".zip"; bin="agr.exe"; fi
+            work="dist/agr-${VERSION}-${GOOS}-${GOARCH}"
+            mkdir -p "$work"
+            GOOS="$GOOS" GOARCH="$GOARCH" go build -ldflags "$LDFLAGS" -o "$work/$bin" ./cmd/agr
+            if [ "$GOOS" = "windows" ]; then
+              (cd "$work" && zip -q "../agr-${VERSION}-${GOOS}-${GOARCH}${ext}" "$bin")
+            else
+              tar -C "$work" -czf "dist/agr-${VERSION}-${GOOS}-${GOARCH}.tar.gz" "$bin"
+            fi
+            rm -rf "$work"
+          done
+          (cd dist && shasum -a 256 * > checksums.txt)
+
+      - name: Install smoke test
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          tar -xzf "dist/agr-${VERSION}-linux-amd64.tar.gz" -C /tmp
+          /tmp/agr version
+          /tmp/agr version -o json | tee /tmp/agr-version.json
+          grep -q "\"Version\":\"${VERSION}\"" /tmp/agr-version.json
+          # `agr api list-actions` was removed in §9.4 in favour of
+          # `agr schema` for user-facing introspection; smoke a known
+          # mapped command instead.
+          /tmp/agr schema instance.create -o json | grep -q '"Name":"instance.create"'
+
+      - name: Create GitHub Release and upload artifacts
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ steps.version.outputs.version }}
-          name: ${{ steps.version.outputs.version }}
-          generate_release_notes: true
+          tag_name: ${{ steps.version.outputs.tag }}
+          name: ${{ steps.version.outputs.tag }}
+          body_path: RELEASE_NOTES.md
+          files: |
+            dist/*

@@ -1,243 +1,245 @@
-# AGS CLI
+# AGR CLI
 
 [English](README.md)
 
-AGS CLI 是一个用于管理腾讯云智能体沙箱（AGS）的命令行工具。它提供了一种便捷的方式来管理沙箱工具、实例，并在隔离环境中执行代码。
-
-## 功能特性
-
-- **工具管理**：创建、列出和删除沙箱工具（模板）
-- **实例管理**：启动/停止沙箱实例，支持灵活的生命周期控制
-- **代码执行**：支持多种语言（Python、JavaScript、TypeScript、R、Java、Bash）
-- **Shell 命令执行**：在沙箱中运行 Shell 命令，支持流式输出
-- **文件操作**：在沙箱中上传、下载和管理文件
-- **双后端支持**：同时支持 E2B API 和腾讯云 API
-- **端口转发**：将沙箱端口转发到本地，全面支持 HTTP 和 WebSocket 协议
-- **手机沙箱 ADB 连接**：通过 WebSocket 隧道安全访问远程 Android 沙箱
-- **交互式 REPL**：内置交互模式，支持自动补全
-- **流式输出**：长时间运行代码的实时输出流
+AGR CLI 是腾讯云 Agent Runtime（AGR）的命令行工具，安装后的命令名为 `agr`。
 
 ## 安装
 
-### 使用 go install
-
-```bash
-go install github.com/TencentCloudAgentRuntime/ags-cli@latest
-```
-
-**注意**：安装后的命令名为 `ags-cli`。如果您希望使用 `ags` 作为命令名，可以创建一个别名：
-
-```bash
-# 添加到您的 shell 配置文件中（~/.zshrc、~/.bashrc 等）
-alias ags='ags-cli'
-
-# 重新加载 shell 配置
-source ~/.zshrc  # 或 source ~/.bashrc
-```
-
-### 从源码编译
+### 从源码构建
 
 ```bash
 git clone https://github.com/TencentCloudAgentRuntime/ags-cli.git
 cd ags-cli
 make build
+sudo cp agr /usr/local/bin/agr
 ```
 
-### 跨平台编译
+### 使用 `go install`
 
 ```bash
-make build-all  # 编译 Linux、macOS、Windows 版本
+go install github.com/TencentCloudAgentRuntime/ags-cli/cmd/agr@latest
 ```
 
-## 配置
+## 前置条件
 
-创建 `~/.ags/config.toml`：
+1. [腾讯云](https://cloud.tencent.com/) 账号
+2. 已开通 AGR（Agent Runtime）服务
+3. API 凭据（SecretID / SecretKey）— 在 [访问管理控制台](https://console.cloud.tencent.com/cam/capi) 获取
 
-```toml
-backend = "e2b"
-output = "text"
-
-[e2b]
-api_key = "your-e2b-api-key"
-domain = "tencentags.com"
-region = "ap-guangzhou"
-
-[cloud]
-secret_id = "your-secret-id"
-secret_key = "your-secret-key"
-region = "ap-guangzhou"
-```
-
-或使用环境变量：
+## 初始化 CLI 凭据
 
 ```bash
-export AGS_E2B_API_KEY="your-api-key"
-export AGS_CLOUD_SECRET_ID="your-secret-id"
-export AGS_CLOUD_SECRET_KEY="your-secret-key"
+export TENCENTCLOUD_SECRET_ID="your-secret-id"
+export TENCENTCLOUD_SECRET_KEY="your-secret-key"
+
+agr init \
+  --secret-id "$TENCENTCLOUD_SECRET_ID" \
+  --secret-key "$TENCENTCLOUD_SECRET_KEY"
 ```
 
-### 后端差异
-
-AGS CLI 支持两种后端，功能有所不同：
-
-| 功能 | E2B 后端 | 云端后端 |
-|------|----------|----------|
-| 认证方式 | 仅 API Key | SecretID + SecretKey |
-| 工具管理 | ✗ | ✓ |
-| 实例操作 | ✓ | ✓ |
-| 代码执行 | ✓ | ✓ |
-| 文件操作 | ✓ | ✓ |
-| API 密钥管理 | ✗ | ✓ |
-
-**E2B 配置**提供了对 E2B API 的兼容。使用 E2B 后端时，只需要 API Key 即可进行沙箱实例相关操作（创建、列出、删除实例，执行代码，文件操作），但无法管理沙箱工具。
-
-如需管理沙箱工具（列出/获取/创建/更新/删除）和 API 密钥，必须使用**云端后端**，配置腾讯云的 SecretID 和 SecretKey。您可以在此获取 AKSK：https://console.cloud.tencent.com/cam/capi
-
-### 架构：控制面 vs 数据面
-
-AGS CLI 将操作分为两个层面：
-
-- **控制面**：实例生命周期管理（创建/删除/列表）、工具管理、API 密钥管理
-  - E2B 后端：使用 API Key + E2B REST API
-  - 云端后端：使用 AKSK + 腾讯云 API
-  
-- **数据面**：代码执行、Shell 命令、文件操作
-  - 两种后端都使用相同的 E2B 兼容数据面网关，通过 Access Token 认证
-
-`backend` 配置只影响控制面操作。数据面操作始终通过 `ags-go-sdk` 使用 E2B 协议。
-
-Access Token 在实例创建时自动缓存到 `~/.ags/tokens.json`，供后续数据面操作使用
+`agr init` 只写本机 CLI 配置，不创建远端资源。
 
 ## 快速开始
 
 ```bash
-# 进入 REPL 模式
-ags
+export TENCENTCLOUD_SECRET_ID="your-secret-id"
+export TENCENTCLOUD_SECRET_KEY="your-secret-key"
 
-# 列出可用工具
-ags tool list
+agr init \
+  --secret-id "$TENCENTCLOUD_SECRET_ID" \
+  --secret-key "$TENCENTCLOUD_SECRET_KEY"
 
-# 创建实例
-ags instance create -t code-interpreter-v1
+tool_name="quickstart-code-$(date +%s)-$$"
+tool_id=$(agr tool create \
+  --tool-name "$tool_name" \
+  --tool-type code-interpreter \
+  --network-configuration '{"NetworkMode":"SANDBOX"}' \
+  -o json --jq '.Data.ToolId')
 
-# 执行 Python 代码
-ags run -c "print('Hello, World!')"
-
-# 流式输出执行
-ags run -s -c "import time; [print(i) or time.sleep(1) for i in range(5)]"
-
-# 执行 Shell 命令
-ags exec "ls -la"
-
-# 上传/下载文件
-ags file upload local.txt /home/user/remote.txt
-ags file download /home/user/file.txt ./local.txt
+instance_id=$(agr instance create --tool-id "$tool_id" -o json --jq '.Data.InstanceId')
+agr instance code run "$instance_id" -c "print('Hello, World!')"
+agr instance delete "$instance_id" --ignore-not-found
+agr tool delete "$tool_id" || true
 ```
 
-## 端口转发
+示例会先生成一个唯一的工具名，因为同一 AppId 下工具名称必须唯一。
 
-`ags proxy` 可将远程沙箱端口转发到本地，类似 `kubectl port-forward`，全面支持 HTTP 和 WebSocket 协议。
+## 临时沙箱工作流
+
+`agr instance code run` 与 `agr instance exec` 接受
+`--create-temp-instance`：仅为本次执行创建一个临时沙箱并自动清理。
+这里引用的工具必须事先存在，请先用 `agr tool create` 创建，再传
+`--tool-name` 或 `--tool-id`：
 
 ```bash
-# 将沙箱 8080 端口转发到本地 8080
-ags proxy sandbox-xxx 8080
+# 创建临时实例，运行片段，结束后总是删除（cleanup=always 是默认值）
+agr instance code run \
+  --create-temp-instance \
+  --tool-id "$tool_id" \
+  -c "print('hello')"
 
-# 将沙箱 8080 端口转发到本地 3000
-ags proxy sandbox-xxx 3000:8080
+# 同样的工作流，但保留临时实例（用于排错）
+agr instance exec \
+  --create-temp-instance \
+  --tool-id "$tool_id" \
+  --cleanup never \
+  -- python -V
 ```
 
-> **注意**：使用前需先在 AGS 沙箱控制台中开放目标端口：进入沙箱实例 → **网络** → **开放端口**，将远程端口号加入白名单。未配置的端口请求将被网关拒绝。
+`--cleanup` 接受 `always`（默认）、`success`、`never` 三种取值。
+若需要在执行结束后保留临时实例，使用 `--cleanup never`；
+**不存在 `--keep-temp-instance` 标志**。
 
-## 手机沙箱（ADB 连接）
+`-o json` 时，响应包含 `Data.ExecutionContext.SandboxInstanceId`、
+`Data.ExecutionContext.TemporarySandboxInstance` 与
+`Data.ExecutionContext.Cleanup`，方便脚本检查工作流。
 
-对于 **mobile（手机）** 类型的沙箱（Android），AGS CLI 提供了通过 WebSocket 隧道安全访问 ADB 的功能。这允许您使用标准的 `adb` 命令与远程 Android 沙箱实例进行交互。
+## 控制面端点与数据面域名
 
-### 前置要求
+| Flag | 默认值 | 作用对象 |
+|---|---|---|
+| `--cloud-endpoint` | `ags.tencentcloudapi.com` | 控制面 API 端点 |
+| `--domain` | `tencentags.com` | 数据面域名（browser、exec 等数据通道）|
 
-- 一个 mobile 类型的沙箱工具（如 Android 13 沙箱）
-- 本地已安装 `adb`（[Android SDK Platform Tools](https://developer.android.com/tools/releases/platform-tools)）
+`--cloud-endpoint` 同时作用于常规资源命令与 `agr api call`；`--domain`
+仅影响数据面访问。两者也可通过 `~/.agr/config.toml` 中的
+`cloud_endpoint` / `domain` 字段，或 `AGR_CLOUD_ENDPOINT` /
+`AGR_DOMAIN` 环境变量设置。两个开关相互独立。
 
-### 操作流程
+## 原始 API 调用
+
+每个已映射 API 操作的稳定入口仍是对应的资源命令。当需要调试或访问
+资源命令尚未覆盖的字段时，可以使用 `agr api call`：
 
 ```bash
-# 第 1 步：创建 mobile 类型的手机沙箱实例
-ags instance create -t <mobile-tool-name>
-# ✓ Instance created: 8d7a3c17ef84******************************e73c58
-
-# 第 2 步：通过 ADB 隧道连接到手机沙箱
-ags mobile connect 8d7a3c17ef84******************************e73c58
-# connected to 127.0.0.1:61876
-# ℹ connected to 8d7a3c17ef84******************************e73c58 (127.0.0.1:61876)
-# ℹ tunnel log: /Users/<user>/.ags/tunnel-8d7a3c17ef84******************************e73c58.log
-
-# 第 3 步：查看活跃的手机沙箱连接，并确认 ADB 设备
-ags mobile list
-# SANDBOX                                   ADB ADDRESS        STATUS
-# 8d7a3c17ef84******************************e73c58  127.0.0.1:61876    connected
-adb devices
-# List of devices attached
-# 127.0.0.1:61876    device
-
-# 第 4 步：连接成功后，即可执行所有原生 adb 操作（shell、install、push、pull、screencap 等）
-adb -s 127.0.0.1:61876 shell getprop ro.build.display.id
-
-# 第 5 步：使用完毕后断开连接
-ags mobile disconnect 8d7a3c17ef84******************************e73c58
-# ℹ disconnected from 8d7a3c17ef84******************************e73c58
-
-# 或一次性断开所有活跃连接
-ags mobile disconnect --all
+agr api call DescribeSandboxInstanceList --request '{"Limit":1}'
+agr api call StartSandboxInstance --request @start.json
+agr api call StopSandboxInstance --request - < stop.json
 ```
 
-> **注意**：`ags mobile` 命令仅适用于 **mobile（手机）** 类型的沙箱实例（如 Android 沙箱），不适用于普通的代码执行沙箱。
+## 命令一览
 
-## 命令参考
+```text
+agr                              打印帮助
+agr init                         初始化本机 CLI 配置与凭据
+agr version                      版本信息
+agr status                       当前配置状态
+agr schema [command]             机器可读命令 schema
+agr doctor                       诊断配置与连通性
+agr explain <CODE>               解释错误码与修复建议
 
-各命令的详细文档：
+agr instance create              创建实例
+agr instance list                列出实例
+agr instance get <id>            实例详情
+agr instance update <id>         更新 timeout / metadata
+agr instance pause <id>          暂停实例
+agr instance resume <id>         恢复实例
+agr instance delete <id>         删除实例
 
-| 命令 | 别名 | 描述 | 文档 |
-|------|------|------|------|
-| `tool` | `t` | 工具管理 | [ags-tool](docs/ags-tool-zh.md) |
-| `instance` | `i` | 实例管理 | [ags-instance](docs/ags-instance-zh.md) |
-| `run` | `r` | 代码执行 | [ags-run](docs/ags-run-zh.md) |
-| `exec` | `x` | Shell 命令执行 | [ags-exec](docs/ags-exec-zh.md) |
-| `file` | `f`, `fs` | 文件操作 | [ags-file](docs/ags-file-zh.md) |
-| `proxy` | - | 端口转发 | [ags-proxy](docs/ags-proxy-zh.md) |
-| `mobile` | `m` | 手机沙箱 ADB 连接 | [ags-mobile](docs/ags-mobile-zh.md) |
-| `apikey` | `ak`, `key` | API 密钥管理 | [ags-apikey](docs/ags-apikey-zh.md) |
+agr instance code run <id>       在实例中执行代码
+agr instance exec <id> -- CMD    在实例中执行 shell 命令
+agr instance file upload <id>    上传文件
+agr instance file download <id>  下载文件
+agr instance login <id>          PTY 终端会话
+agr instance browser vnc <id>    显示 VNC URL
+agr instance proxy <id> PORT     端口转发到 localhost
+agr instance mobile ...          Mobile ADB 操作
 
-参见 [ags](docs/ags-zh.md) 了解全局选项和配置详情。
+agr tool list/create/get/update/delete
+agr apikey create/list/delete
+agr pre-cache-image-task create|get
+agr completion bash|zsh|fish|powershell
+```
 
-### Man Pages
+## 机器可读输出
 
-生成并安装 man pages 以便离线查阅文档：
+支持 `-o json` 的命令在 stdout 返回一份 `agr.v1` envelope：
+
+```json
+{
+  "SchemaVersion": "agr.v1",
+  "Command": "instance.create",
+  "Status": "succeeded",
+  "Data": { "InstanceId": "sandbox-xxx", "ToolName": "my-tool" },
+  "Failure": null,
+  "Warnings": [],
+  "Meta": { "DurationMs": 123 }
+}
+```
+
+示例：
 
 ```bash
-# 生成 man pages
-make man
-
-# 安装到系统（需要 sudo）
-make install-man
-
-# 查看文档
-man ags
-man ags-tool
-man ags-instance
+agr instance create --tool-id "$tool_id" -o json --jq '.Data.InstanceId'
+agr instance list -o json --jq '.Data.Items[].InstanceId'
+agr status -o json --jq '.Data.Region'
+agr schema -o json --jq '.Data.ExitCodes'
 ```
 
-## Shell 补全
+`--jq` 必须与 `-o json` 一起使用。JSON envelope 使用 `agr.v1`，
+NDJSON 事件使用 `agr.events.v1`。
+
+## 流式输出
+
+只有 `instance code run` 与 `instance exec` 支持机器可读的流式输出：
 
 ```bash
-# Bash
-ags completion bash > /etc/bash_completion.d/ags
-
-# Zsh
-ags completion zsh > "${fpath[1]}/_ags"
-
-# Fish
-ags completion fish > ~/.config/fish/completions/ags.fish
+agr instance code run "$id" -c "print(1)" --stream -o ndjson
+agr instance exec "$id" --stream -o ndjson -- tail -f app.log
 ```
 
-## 许可证
+每行 stdout 是一个 `agr.events.v1` JSON 事件。
 
-本项目基于 Apache License 2.0 开源。详见 [LICENSE](LICENSE-AGS%20CLI.txt) 文件。
+## 退出码
+
+| Exit | Kind | 说明 |
+|---:|---|---|
+| 0 | success | 成功 |
+| 1 | error | 通用错误，细分原因查看 `Failure.Kind` |
+| 2 | usage | 参数、flag 或输入错误 |
+| 4 | auth | 凭证、鉴权或权限错误 |
+| 255 | remote_execution_failed | 远端代码执行失败 |
+
+`instance exec` 与 `instance mobile adb` 也可能透传下游进程的退出码（`0-255` 范围）。
+
+完整列表见 `agr schema -o json --jq '.Data.ExitCodes'`。
+
+## 全局 flag
+
+```text
+--config          配置文件路径（默认：~/.agr/config.toml）
+-o, --output      输出格式：text、json、ndjson（`ndjson` 仅在显式传给受支持的流式命令时可用）
+--jq              jq 表达式（仅 `-o json` 时生效）
+--region          腾讯云 region（默认：ap-guangzhou）
+--cloud-endpoint  控制面 API 端点（默认：ags.tencentcloudapi.com）
+--domain          数据面域名（默认：tencentags.com）
+--secret-id       腾讯云 SecretID
+--secret-key      腾讯云 SecretKey
+--non-interactive 禁用交互提示
+--no-color        关闭 ANSI 颜色
+--debug           将调试信息写到 stderr
+```
+
+环境变量：`TENCENTCLOUD_SECRET_ID`、`TENCENTCLOUD_SECRET_KEY`、
+`AGR_OUTPUT`、`AGR_REGION`、`AGR_CLOUD_ENDPOINT`、`AGR_DOMAIN`、
+`AGR_NON_INTERACTIVE`、`AGR_DEBUG`、`NO_COLOR`。
+
+`AGR_OUTPUT` 适合作为 `text` 或 `json` 的默认输出配置。若要获取流式事件，请在
+`agr instance code run --stream` 或 `agr instance exec --stream` 上显式传
+`-o ndjson`。
+
+配置优先级：`--flag` > 环境变量 > `~/.agr/config.toml` > 默认值。使用 `agr status` 查看当前生效值及其来源。
+
+## 故障排查
+
+```bash
+agr status
+agr doctor
+agr explain AUTH_FAILED
+agr schema instance.create -o json
+```
+
+## License
+
+详见 [LICENSE](LICENSE-AGR%20CLI.txt)。

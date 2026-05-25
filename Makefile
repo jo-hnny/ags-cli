@@ -1,7 +1,7 @@
-.PHONY: build install clean test lint help man install-man
+.PHONY: build install clean test lint fmt help man install-man e2e
 
 # Binary name
-BINARY_NAME=ags
+BINARY_NAME=agr
 
 # Build directory
 BUILD_DIR=build
@@ -12,6 +12,11 @@ GOBUILD=$(GOCMD) build
 GOTEST=$(GOCMD) test
 GOMOD=$(GOCMD) mod
 GOVET=$(GOCMD) vet
+GOLANGCI_LINT=golangci-lint
+TMP_BASE ?= $(if $(TMPDIR),$(TMPDIR),/tmp)
+GOCACHE_DIR ?= $(TMP_BASE)/agr-go-cache
+GOTMPDIR_DIR ?= $(TMP_BASE)/agr-go-tmp
+GO_RUN_ENV = GOCACHE=$(GOCACHE_DIR) GOTMPDIR=$(GOTMPDIR_DIR)
 
 # Version info (can be overridden)
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
@@ -27,7 +32,8 @@ all: build
 ## build: Build the binary
 build:
 	@echo "Building $(BINARY_NAME)..."
-	$(GOBUILD) $(LDFLAGS) -o $(BINARY_NAME) .
+	@mkdir -p $(GOCACHE_DIR) $(GOTMPDIR_DIR)
+	$(GO_RUN_ENV) $(GOBUILD) $(LDFLAGS) -o $(BINARY_NAME) ./cmd/agr
 
 ## build-all: Build for multiple platforms
 build-all: build-linux build-darwin build-windows
@@ -35,19 +41,22 @@ build-all: build-linux build-darwin build-windows
 build-linux:
 	@echo "Building for Linux..."
 	@mkdir -p $(BUILD_DIR)
-	GOOS=linux GOARCH=amd64 $(GOBUILD) $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_NAME)-linux-amd64 .
-	GOOS=linux GOARCH=arm64 $(GOBUILD) $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_NAME)-linux-arm64 .
+	@mkdir -p $(GOCACHE_DIR) $(GOTMPDIR_DIR)
+	$(GO_RUN_ENV) GOOS=linux GOARCH=amd64 $(GOBUILD) $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_NAME)-linux-amd64 ./cmd/agr
+	$(GO_RUN_ENV) GOOS=linux GOARCH=arm64 $(GOBUILD) $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_NAME)-linux-arm64 ./cmd/agr
 
 build-darwin:
 	@echo "Building for macOS..."
 	@mkdir -p $(BUILD_DIR)
-	GOOS=darwin GOARCH=amd64 $(GOBUILD) $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_NAME)-darwin-amd64 .
-	GOOS=darwin GOARCH=arm64 $(GOBUILD) $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_NAME)-darwin-arm64 .
+	@mkdir -p $(GOCACHE_DIR) $(GOTMPDIR_DIR)
+	$(GO_RUN_ENV) GOOS=darwin GOARCH=amd64 $(GOBUILD) $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_NAME)-darwin-amd64 ./cmd/agr
+	$(GO_RUN_ENV) GOOS=darwin GOARCH=arm64 $(GOBUILD) $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_NAME)-darwin-arm64 ./cmd/agr
 
 build-windows:
 	@echo "Building for Windows..."
 	@mkdir -p $(BUILD_DIR)
-	GOOS=windows GOARCH=amd64 $(GOBUILD) $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_NAME)-windows-amd64.exe .
+	@mkdir -p $(GOCACHE_DIR) $(GOTMPDIR_DIR)
+	$(GO_RUN_ENV) GOOS=windows GOARCH=amd64 $(GOBUILD) $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_NAME)-windows-amd64.exe ./cmd/agr
 
 ## install: Install the binary to /usr/local/bin
 install: build
@@ -70,11 +79,21 @@ clean:
 
 ## test: Run tests
 test:
-	$(GOTEST) -v ./...
+	@mkdir -p $(GOCACHE_DIR) $(GOTMPDIR_DIR)
+	$(GO_RUN_ENV) $(GOTEST) -v ./...
 
 ## lint: Run go vet
 lint:
-	$(GOVET) ./...
+	mkdir -p $(GOCACHE_DIR) $(GOTMPDIR_DIR)
+	$(GO_RUN_ENV) $(GOLANGCI_LINT) run
+
+## fmt: Run gofmt
+fmt:
+	gofmt -w .
+
+## e2e: Run lifecycle tests (requires credentials via env or ~/.agr/config.toml)
+e2e:
+	$(GOTEST) -v -timeout 20m ./tests/lifecycle/...
 
 ## deps: Download dependencies
 deps:
@@ -84,10 +103,10 @@ deps:
 tidy:
 	$(GOMOD) tidy
 
-## man: Generate man pages
-man: build
+## man: Generate man pages (maintainer-only docgen, NextPlan §9.5)
+man:
 	@echo "Generating man pages..."
-	@./$(BINARY_NAME) docs man -o man
+	@go run ./cmd/internal/docgen man --dir man
 	@echo "Done."
 
 ## install-man: Install man pages to system
@@ -95,12 +114,12 @@ install-man: man
 	@echo "Installing man pages to /usr/local/share/man/man1/..."
 	@sudo mkdir -p /usr/local/share/man/man1
 	@sudo cp man/*.1 /usr/local/share/man/man1/
-	@echo "Done. Use 'man ags' or 'man ags-tool' to view."
+	@echo "Done. Use 'man agr' to view."
 
 ## uninstall-man: Remove man pages from system
 uninstall-man:
 	@echo "Removing man pages..."
-	@sudo rm -f /usr/local/share/man/man1/ags*.1
+	@sudo rm -f /usr/local/share/man/man1/agr*.1
 	@echo "Done."
 
 ## help: Show this help message

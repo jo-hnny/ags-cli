@@ -1,0 +1,268 @@
+# AGR CLI mapping.yaml
+#
+# Anti-corruption mapping between TencentCloud AGS API actions
+# (api/ags/v20250920/api.json) and AGR CLI resource commands.
+#
+# Status invariants (every action in api.json MUST appear here):
+#   - mapped:               exposed as a stable resource command.
+#   - raw_only:             reachable only via `agr api call <Action>`.
+#                           A reason is required.
+#   - deferred_with_reason: intentionally not exposed yet.
+#                           A reason is required.
+#
+# fields: by-need overrides (NextPlan §8). Members that should use the
+# default behavior (canonical kebab-case long flag, no shorthand /
+# aliases) MUST NOT appear here. Add an entry only when a field needs
+# alias / shorthand / positional / excluded / non-default flag.
+#
+# Per-field overrides:
+#   flag:       custom long flag name; canonical kebab-case becomes an alias automatically.
+#   shorthand:  single-letter shorthand for cobra; conflicts within a command fail CI.
+#   aliases:    extra long flags accepted by cobra alongside the canonical one.
+#   positional: read this field from cobra args instead of a flag (still accepted via --request).
+#   excluded:   suppress the cobra flag entirely; --request still accepts the field.
+#               cannot be combined with flag / shorthand / aliases / positional.
+
+api_version: "v20250920"
+
+actions:
+  StartSandboxInstance:
+    command: instance.create
+    request: StartSandboxInstanceRequest
+    response: StartSandboxInstanceResponse
+    status: mapped
+    fields:
+      ToolName:
+        shorthand: t
+        inputs:
+          - flag: tool-name
+            type: string
+            shorthand: t
+      MountOptions:
+        inputs:
+          - flag: mount-options
+            type: json
+      Timeout:
+        inputs:
+          - flag: timeout
+            type: string
+      AuthMode:
+        inputs:
+          - flag: auth-mode
+            type: enum
+      Metadata:
+        inputs:
+          - flag: metadata
+            type: json
+
+  DescribeSandboxInstanceList:
+    command: instance.list
+    request: DescribeSandboxInstanceListRequest
+    response: DescribeSandboxInstanceListResponse
+    status: mapped
+    fields:
+      InstanceIds:
+        inputs:
+          - flag: instance-ids
+            type: string_array
+      Filters:
+        inputs:
+          - flag: filters
+            type: json
+      Offset:
+        inputs:
+          - flag: offset
+            type: int
+      Limit:
+        inputs:
+          - flag: limit
+            type: int
+
+  UpdateSandboxInstance:
+    command: instance.update
+    request: UpdateSandboxInstanceRequest
+    response: UpdateSandboxInstanceResponse
+    status: mapped
+    fields:
+      InstanceId:
+        positional: true
+      Metadata:
+        inputs:
+          - flag: metadata
+            type: json
+
+  PauseSandboxInstance:
+    command: instance.pause
+    request: PauseSandboxInstanceRequest
+    response: PauseSandboxInstanceResponse
+    status: mapped
+    fields:
+      InstanceId:
+        positional: true
+
+  ResumeSandboxInstance:
+    command: instance.resume
+    request: ResumeSandboxInstanceRequest
+    response: ResumeSandboxInstanceResponse
+    status: mapped
+    fields:
+      InstanceId:
+        positional: true
+
+  StopSandboxInstance:
+    command: instance.delete
+    request: StopSandboxInstanceRequest
+    response: StopSandboxInstanceResponse
+    status: mapped
+    fields:
+      InstanceId:
+        positional: true
+
+  AcquireSandboxInstanceToken:
+    status: raw_only
+    request: AcquireSandboxInstanceTokenRequest
+    response: AcquireSandboxInstanceTokenResponse
+    reason: >-
+      Token retrieval is an internal data-plane bootstrap call. The CLI uses it
+      transparently from `instance create` / `instance login` / `instance code
+      run`. It is intentionally not exposed as its own resource command and is
+      only reachable via `agr api call AcquireSandboxInstanceToken`.
+
+  CreateSandboxTool:
+    command: tool.create
+    request: CreateSandboxToolRequest
+    response: CreateSandboxToolResponse
+    status: mapped
+    fields:
+      ToolName:
+        shorthand: n
+        inputs:
+          - flag: tool-name
+            type: string
+            shorthand: n
+      ToolType:
+        shorthand: t
+        inputs:
+          - flag: tool-type
+            type: string
+            shorthand: t
+      Description:
+        shorthand: d
+        inputs:
+          - flag: description
+            type: string
+            shorthand: d
+      DefaultTimeout:
+        inputs:
+          - flag: default-timeout
+            type: string
+      NetworkConfiguration:
+        inputs:
+          - flag: network-configuration
+            type: json
+      Tags:
+        inputs:
+          - flag: tags
+            type: json
+      StorageMounts:
+        inputs:
+          - flag: storage-mounts
+            type: json
+
+  DescribeSandboxToolList:
+    command: tool.list
+    request: DescribeSandboxToolListRequest
+    response: DescribeSandboxToolListResponse
+    status: mapped
+    fields:
+      ToolIds:
+        inputs:
+          - flag: tool-ids
+            type: string_array
+      Filters:
+        inputs:
+          - flag: filters
+            type: json
+      Offset:
+        inputs:
+          - flag: offset
+            type: int
+      Limit:
+        inputs:
+          - flag: limit
+            type: int
+
+  UpdateSandboxTool:
+    command: tool.update
+    request: UpdateSandboxToolRequest
+    response: UpdateSandboxToolResponse
+    status: mapped
+    fields:
+      ToolId:
+        positional: true
+      Description:
+        shorthand: d
+        inputs:
+          - flag: description
+            type: string
+            shorthand: d
+      NetworkConfiguration:
+        inputs:
+          - flag: network-configuration
+            type: json
+      Tags:
+        inputs:
+          - flag: tags
+            type: json
+
+  DeleteSandboxTool:
+    command: tool.delete
+    request: DeleteSandboxToolRequest
+    response: DeleteSandboxToolResponse
+    status: mapped
+    fields:
+      ToolId:
+        positional: true
+
+  CreateAPIKey:
+    command: apikey.create
+    request: CreateAPIKeyRequest
+    response: CreateAPIKeyResponse
+    status: mapped
+    fields:
+      Name:
+        shorthand: n
+        inputs:
+          - flag: name
+            type: string
+            shorthand: n
+
+  DescribeAPIKeyList:
+    command: apikey.list
+    request: DescribeAPIKeyListRequest
+    response: DescribeAPIKeyListResponse
+    status: mapped
+
+  DeleteAPIKey:
+    command: apikey.delete
+    request: DeleteAPIKeyRequest
+    response: DeleteAPIKeyResponse
+    status: mapped
+    fields:
+      KeyId:
+        positional: true
+
+  CreatePreCacheImageTask:
+    command: pre-cache-image-task.create
+    request: CreatePreCacheImageTaskRequest
+    response: CreatePreCacheImageTaskResponse
+    status: mapped
+
+  DescribePreCacheImageTask:
+    command: pre-cache-image-task.get
+    request: DescribePreCacheImageTaskRequest
+    response: DescribePreCacheImageTaskResponse
+    status: mapped
+    fields:
+      ImageDigest:
+        positional: true

@@ -1,8 +1,8 @@
-# Contributing to AGS CLI
+# Contributing to AGR CLI
 
 [中文版](CONTRIBUTING-zh.md)
 
-Thank you for your interest in contributing to AGS CLI! This document provides guidelines and instructions for contributing.
+Thank you for your interest in contributing to AGR CLI! This document provides guidelines and instructions for contributing.
 
 ## Table of Contents
 
@@ -30,7 +30,7 @@ Before creating a bug report, please check existing issues to avoid duplicates.
 When filing a bug report, please include:
 
 1. **Title**: A clear and descriptive title
-2. **Environment**: OS, Go version, AGS CLI version
+2. **Environment**: OS, Go version, AGR CLI version
 3. **Steps to Reproduce**: Detailed steps to reproduce the issue
 4. **Expected Behavior**: What you expected to happen
 5. **Actual Behavior**: What actually happened
@@ -102,7 +102,7 @@ For significant changes or new features, we recommend submitting a design propos
 
 ### Prerequisites
 
-- Go 1.21 or later
+- Go 1.25 or later
 - Make
 
 ### Building from Source
@@ -126,11 +126,11 @@ make install
 
 ```
 ags-cli/
-├── cmd/           # Command implementations
+├── cmd/agr/       # CLI entrypoint
+├── cmd/internal/  # Maintainer utilities
 ├── internal/      # Internal packages
-├── examples/      # Usage examples
-├── build/         # Build artifacts
-└── main.go        # Entry point
+├── api/           # Generated API metadata
+└── tests/         # Live CLI and lifecycle coverage
 ```
 
 ## Coding Guidelines
@@ -206,4 +206,4 @@ If you have questions, feel free to:
 - Open a discussion issue
 - Reach out to maintainers
 
-Thank you for contributing to AGS CLI!
+Thank you for contributing to AGR CLI!

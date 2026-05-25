@@ -2,6 +2,40 @@
 
 本项目的所有重要更改都将记录在此文件中。
 
+## [0.5.0] - 2026-05-22
+
+### 破坏性变更
+- 0.5.0 相比 0.4.0 并不向后兼容。命令组织、flag 集合、request
+  输入方式以及机器可读输出契约都在这一版里发生了明显变化。
+- 现有 shell 脚本、封装层、CI 调用和任何依赖 `agr` 的自动化，
+  升级前都需要重新检查。
+- 如果你消费 JSON 或 NDJSON 输出，也应当基于新的
+  `agr.v1` / `agr.events.v1` 契约重新验证解析逻辑。
+
+### 新增
+- CLI 被重新整理为更清晰的资源导向命令树，同时补齐了更一致的
+  help 文案和机器可读命令元数据。
+- 新增一组更适合日常使用的辅助命令：
+  `agr schema`、`agr doctor`、`agr explain`、
+  `agr config {show,set,path}`。
+- `agr instance code run` 与 `agr instance exec` 新增临时沙箱工作流，
+  支持 `--create-temp-instance`、清理策略控制，以及 JSON 输出中的
+  `Data.ExecutionContext` 生命周期描述。
+- 新增原始控制面 escape hatch `agr api call <Action> --request ...`，
+  方便高级调试和未映射能力访问。
+- 控制面 endpoint（`--cloud-endpoint`）与数据面 domain（`--domain`）
+  的职责现在更加清晰分离。
+- CLI 的 JSON 输出与流式行为整体更加一致，失败信息和执行上下文也更丰富。
+
+### 修复
+- 本版本没有 BugFix。
+
+### 文档
+- 更新 README 和 changelog，补充 `agr` 命令表面、`0.5.0` 迁移说明
+  以及更新后的 quick start 指引。
+- 迁移现有自动化时，建议优先参考 `agr --help` 和
+  `agr schema <command> -o json`。
+
 ## [0.4.0] - 2026-04-28
 
 ### 新增

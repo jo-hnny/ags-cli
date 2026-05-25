@@ -12,10 +12,10 @@ jobs:
     name: Format Check
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
 
@@ -32,34 +32,120 @@ jobs:
     name: Unit Tests
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
 
       - name: Run tests
         run: go test -v -race -coverprofile=coverage.out ./...
 
-      - name: Upload coverage
-        uses: actions/upload-artifact@v4
-        with:
-          name: coverage
-          path: coverage.out
-
   lint:
     name: Lint
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
 
       - name: golangci-lint
-        uses: golangci/golangci-lint-action@v7
+        uses: golangci/golangci-lint-action@v9
         with:
           version: latest
+
+  changelog-gate:
+    name: Changelog Gate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Validate changelog structure
+        run: |
+          bash scripts/changelog.sh validate
+          bash scripts/changelog.sh validate-latest-release-notes
+
+  generator-gate:
+    name: API Generator Gate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+
+      - name: Mapping invariants
+        run: go test ./internal/apimeta/... -count=1
+
+      - name: Cobra flag contract (generated flags exist on commands)
+        run: go test ./cmd/agr -run "TestContract_GeneratedFlagsArePresentOnCobraCommands|TestContract_RequestFlagOnEveryMappedRequestCommand" -count=1
+
+      - name: Generator outputs are up to date
+        run: go run ./cmd/internal/cobragen check
+
+      - name: Docs and man pages can be regenerated
+        # docs/ and man/ are NOT tracked in the repo; they are generated
+        # artifacts produced by the maintainer-only docgen tool
+        # (NextPlan §9.5). This step verifies the generation still
+        # works without requiring a baseline in the source tree and
+        # without exposing a user-facing `agr docs` command.
+        run: |
+          set -euo pipefail
+          tmpdocs="$(mktemp -d)"
+          tmpman="$(mktemp -d)"
+          go run ./cmd/internal/docgen markdown --dir "$tmpdocs"
+          go run ./cmd/internal/docgen man --dir "$tmpman"
+          test "$(ls -1 "$tmpdocs" | wc -l)" -gt 0
+          test "$(ls -1 "$tmpman" | wc -l)" -gt 0
+
+  overlay-smoke:
+    name: CLI Overlay Smoke
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+
+      - name: Overlay create -> execute -> cleanup tests
+        run: |
+          go test ./internal/cli -run "TestResolveOverlay|TestOverlay_TempInstance|TestOverlay_InstanceExecTempLifecycleIntegration|TestOverlay_PreExecutionFailureForcesCleanup" -count=1 -v
+
+  release-ready:
+    name: Release Ready
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+
+      - name: Build all platforms
+        run: |
+          set -euo pipefail
+          mkdir -p build
+          for os in linux darwin; do
+            for arch in amd64 arm64; do
+              GOOS="$os" GOARCH="$arch" go build -ldflags "-X main.Version=ci-$(date +%s) -X main.Commit=$(git rev-parse --short HEAD) -X main.BuildTime=$(date -u +%FT%TZ)" -o "build/agr-${os}-${arch}" ./cmd/agr
+            done
+          done
+          GOOS=windows GOARCH=amd64 go build -ldflags "-X main.Version=ci-$(date +%s) -X main.Commit=$(git rev-parse --short HEAD) -X main.BuildTime=$(date -u +%FT%TZ)" -o build/agr-windows-amd64.exe ./cmd/agr
+
+      - name: agr version smoke test
+        run: |
+          go build -ldflags "-X main.Version=v0.0.0-ci -X main.Commit=$(git rev-parse --short HEAD) -X main.BuildTime=$(date -u +%FT%TZ)" -o agr-smoke ./cmd/agr
+          ./agr-smoke version
+          ./agr-smoke version -o json | grep -q '"Version":"v0.0.0-ci"'
+          # api list-actions / coverage are maintainer-only (NextPlan §9.4);
+          # smoke a known mapped resource command via `agr schema` instead.
+          ./agr-smoke schema instance.create -o json | grep -q '"Name":"instance.create"'

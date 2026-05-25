@@ -1,114 +1,87 @@
+// Package config loads and validates AGR configuration from defaults, config
+// files, environment variables, and command-line overrides.
 package config
 
 import (
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 
+	"github.com/TencentCloudAgentRuntime/ags-cli/internal/output"
 	"github.com/spf13/viper"
 )
 
-// Config represents the CLI configuration
+// Config is the resolved AGR configuration from defaults, config file, env, and flags.
 type Config struct {
-	Backend  string        `mapstructure:"backend"`
-	Output   string        `mapstructure:"output"`
-	Region   string        `mapstructure:"region"`   // Unified region for both control plane and data plane
-	Domain   string        `mapstructure:"domain"`   // Unified base domain (normalized: includes "internal." prefix when internal mode is enabled)
-	Internal bool          `mapstructure:"internal"` // Use internal endpoints for both control plane and data plane
-	E2B      E2BConfig     `mapstructure:"e2b"`
-	Cloud    CloudConfig   `mapstructure:"cloud"`
-	Sandbox  SandboxConfig `mapstructure:"sandbox"`
+	Output        string        `mapstructure:"output"`
+	Region        string        `mapstructure:"region"`
+	Domain        string        `mapstructure:"domain"`
+	CloudEndpoint string        `mapstructure:"cloud_endpoint"`
+	Auth          AuthConfig    `mapstructure:"auth"`
+	Sandbox       SandboxConfig `mapstructure:"sandbox"`
 }
 
-// E2BConfig represents E2B API configuration
-type E2BConfig struct {
-	APIKey string `mapstructure:"api_key"`
-	// Deprecated: Use top-level "domain" instead. Will be removed in a future version.
-	Domain string `mapstructure:"domain"`
-	// Deprecated: Use top-level "region" instead. Will be removed in a future version.
-	Region string `mapstructure:"region"`
-}
-
-// CloudConfig represents Tencent Cloud API configuration
-type CloudConfig struct {
+// AuthConfig holds TencentCloud credentials.
+type AuthConfig struct {
 	SecretID  string `mapstructure:"secret_id"`
 	SecretKey string `mapstructure:"secret_key"`
-	// Deprecated: Use top-level "region" instead. Will be removed in a future version.
-	Region string `mapstructure:"region"`
-	// Deprecated: Use top-level "internal" instead. Will be removed in a future version.
-	Internal bool `mapstructure:"internal"`
 }
 
-// SandboxConfig represents sandbox-level configuration
+// SandboxConfig holds sandbox command defaults.
 type SandboxConfig struct {
 	DefaultUser string `mapstructure:"default_user"`
 }
 
 const (
-	defaultRegion = "ap-guangzhou"
-	defaultDomain = "tencentags.com"
+	defaultRegion        = "ap-guangzhou"
+	defaultDomain        = "tencentags.com"
+	defaultCloudEndpoint = "ags.tencentcloudapi.com"
 )
 
-// ControlPlaneEndpoint returns the control plane API endpoint for cloud backend.
-// Note: Cloud control plane uses "tencentcloudapi.com" domain system, which is separate from
-// the data plane "tencentags.com" domain. Therefore this endpoint is hardcoded and does not
-// use c.Domain (which only applies to data plane).
+// ControlPlaneEndpoint returns the configured TencentCloud API endpoint.
 func (c *Config) ControlPlaneEndpoint() string {
-	if c.Internal {
-		return "ags.internal.tencentcloudapi.com"
+	if c.CloudEndpoint != "" {
+		return c.CloudEndpoint
 	}
-	return "ags.tencentcloudapi.com"
+	return defaultCloudEndpoint
 }
 
-// DataPlaneDomain returns the base data plane domain.
-// After normalization in resolveDeprecatedFields, Domain already includes "internal." prefix
-// when internal mode is enabled (e.g., "internal.tencentags.com").
-func (c *Config) DataPlaneDomain() string {
-	return c.Domain
-}
+// DataPlaneDomain returns the base data-plane domain.
+func (c *Config) DataPlaneDomain() string { return c.Domain }
 
-// DataPlaneRegionDomain returns the region-qualified data plane domain
-// (e.g., "ap-guangzhou.tencentags.com" or "ap-guangzhou.internal.tencentags.com").
-// This is used for constructing sandbox connection URLs.
+// DataPlaneRegionDomain returns the regional data-plane domain.
 func (c *Config) DataPlaneRegionDomain() string {
 	return fmt.Sprintf("%s.%s", c.Region, c.Domain)
 }
 
-// E2BControlPlaneEndpoint returns the E2B control plane API endpoint
-// (e.g., "https://api.ap-guangzhou.tencentags.com" or "https://api.ap-guangzhou.internal.tencentags.com").
-func (c *Config) E2BControlPlaneEndpoint() string {
-	return fmt.Sprintf("https://api.%s.%s", c.Region, c.Domain)
-}
-
 var (
-	cfg     *Config
-	cfgFile string
+	cfg            *Config
+	cfgFile        string
+	sources        map[string]string
+	configFileUsed string
+	configFileSeen bool
 )
 
-// SetConfigFile sets the config file path
-func SetConfigFile(path string) {
-	cfgFile = path
-}
+var regionPattern = regexp.MustCompile(`^[a-z0-9]+(?:-[a-z0-9]+)*$`)
 
-// Init initializes the configuration
+// SetConfigFile overrides the config file path used by Init.
+func SetConfigFile(path string) { cfgFile = path }
+
+// Init loads configuration from defaults, file, and environment variables.
 func Init() error {
+	viper.Reset()
 	viper.SetConfigType("toml")
+	configFileUsed = ""
+	configFileSeen = false
 
-	// Set default values - top-level unified fields
-	viper.SetDefault("backend", "e2b")
 	viper.SetDefault("output", "text")
 	viper.SetDefault("region", "")
 	viper.SetDefault("domain", "")
-	viper.SetDefault("internal", false)
+	viper.SetDefault("cloud_endpoint", "")
 
-	// Legacy defaults for backward compatibility
-	viper.SetDefault("e2b.domain", "")
-	viper.SetDefault("e2b.region", "")
-	viper.SetDefault("cloud.region", "")
-	viper.SetDefault("cloud.internal", false)
-
-	// Config file path
 	if cfgFile != "" {
 		viper.SetConfigFile(cfgFile)
 	} else {
@@ -116,288 +89,283 @@ func Init() error {
 		if err != nil {
 			return fmt.Errorf("failed to get home directory: %w", err)
 		}
-		configDir := filepath.Join(home, ".ags")
-		viper.AddConfigPath(configDir)
+		viper.AddConfigPath(filepath.Join(home, ".agr"))
 		viper.SetConfigName("config")
 	}
 
-	// Environment variable bindings
-	viper.SetEnvPrefix("AGS")
+	viper.SetEnvPrefix("AGR")
 	viper.AutomaticEnv()
+	_ = viper.BindEnv("output", "AGR_OUTPUT")
+	_ = viper.BindEnv("region", "AGR_REGION")
+	_ = viper.BindEnv("domain", "AGR_DOMAIN")
+	_ = viper.BindEnv("cloud_endpoint", "AGR_CLOUD_ENDPOINT")
+	_ = viper.BindEnv("auth.secret_id", "TENCENTCLOUD_SECRET_ID")
+	_ = viper.BindEnv("auth.secret_key", "TENCENTCLOUD_SECRET_KEY")
+	_ = viper.BindEnv("sandbox.default_user", "AGR_SANDBOX_DEFAULT_USER")
 
-	// Bind specific environment variables - top-level unified fields
-	_ = viper.BindEnv("backend", "AGS_BACKEND")
-	_ = viper.BindEnv("output", "AGS_OUTPUT")
-	_ = viper.BindEnv("region", "AGS_REGION")
-	_ = viper.BindEnv("domain", "AGS_DOMAIN")
-	_ = viper.BindEnv("internal", "AGS_INTERNAL")
-
-	// Legacy environment variable bindings (for backward compatibility)
-	_ = viper.BindEnv("e2b.api_key", "AGS_E2B_API_KEY")
-	_ = viper.BindEnv("e2b.domain", "AGS_E2B_DOMAIN")
-	_ = viper.BindEnv("e2b.region", "AGS_E2B_REGION")
-	_ = viper.BindEnv("cloud.secret_id", "AGS_CLOUD_SECRET_ID")
-	_ = viper.BindEnv("cloud.secret_key", "AGS_CLOUD_SECRET_KEY")
-	_ = viper.BindEnv("cloud.region", "AGS_CLOUD_REGION")
-	_ = viper.BindEnv("cloud.internal", "AGS_CLOUD_INTERNAL")
-	_ = viper.BindEnv("sandbox.default_user", "AGS_SANDBOX_DEFAULT_USER")
-
-	// Read config file (ignore if not found)
 	if err := viper.ReadInConfig(); err != nil {
 		if _, ok := err.(viper.ConfigFileNotFoundError); !ok {
 			return fmt.Errorf("failed to read config file: %w", err)
 		}
 	}
+	configFileUsed = viper.ConfigFileUsed()
+	configFileSeen = configFileUsed != ""
 
-	cfg = &Config{}
-	if err := viper.Unmarshal(cfg); err != nil {
+	nextCfg := &Config{}
+	if err := viper.Unmarshal(nextCfg); err != nil {
 		return fmt.Errorf("failed to unmarshal config: %w", err)
 	}
-
-	// Resolve unified fields from legacy fields with deprecation warnings
-	resolveDeprecatedFields(cfg)
-
+	applyDefaults(nextCfg)
+	cfg = nextCfg
+	initSources()
 	return nil
 }
 
-// resolveDeprecatedFields merges deprecated [e2b]/[cloud] fields into top-level unified fields.
-// Priority: top-level > legacy (based on current backend) > default
-func resolveDeprecatedFields(c *Config) {
-	// Resolve Region: top-level > cloud.region / e2b.region (based on backend) > default
+func initSources() {
+	sources = map[string]string{
+		"output":         "default",
+		"region":         "default",
+		"domain":         "default",
+		"cloud_endpoint": "default",
+		"secret_id":      "",
+		"secret_key":     "",
+		"default_user":   "default",
+	}
+	assignSource("output", []string{"AGR_OUTPUT"}, "output")
+	assignSource("region", []string{"AGR_REGION"}, "region")
+	assignSource("domain", []string{"AGR_DOMAIN"}, "domain")
+	assignSource("cloud_endpoint", []string{"AGR_CLOUD_ENDPOINT"}, "cloud_endpoint")
+	assignSource("secret_id", []string{"TENCENTCLOUD_SECRET_ID"}, "auth.secret_id")
+	assignSource("secret_key", []string{"TENCENTCLOUD_SECRET_KEY"}, "auth.secret_key")
+	assignSource("default_user", []string{"AGR_SANDBOX_DEFAULT_USER"}, "sandbox.default_user")
+}
+
+func assignSource(key string, envVars []string, configKey string) {
+	for _, envVar := range envVars {
+		if os.Getenv(envVar) != "" {
+			sources[key] = envVar
+			return
+		}
+	}
+	if viper.InConfig(configKey) {
+		sources[key] = "config " + configKey
+	}
+}
+
+func applyDefaults(c *Config) {
 	if c.Region == "" {
-		switch c.Backend {
-		case "cloud":
-			if c.Cloud.Region != "" {
-				c.Region = c.Cloud.Region
-				printDeprecationWarning("cloud.region", "region")
-			}
-		case "e2b":
-			if c.E2B.Region != "" {
-				c.Region = c.E2B.Region
-				printDeprecationWarning("e2b.region", "region")
-			}
-		}
-		// Also check the other backend's region as fallback (silent, no deprecation warning
-		// since the field belongs to a different backend than the one currently in use)
-		if c.Region == "" {
-			if c.Cloud.Region != "" {
-				c.Region = c.Cloud.Region
-			} else if c.E2B.Region != "" {
-				c.Region = c.E2B.Region
-			}
-		}
-		if c.Region == "" {
-			c.Region = defaultRegion
-		}
+		c.Region = defaultRegion
 	}
-
-	// Resolve Domain: top-level > e2b.domain > default
 	if c.Domain == "" {
-		if c.E2B.Domain != "" {
-			c.Domain = c.E2B.Domain
-			printDeprecationWarning("e2b.domain", "domain")
-		} else {
-			c.Domain = defaultDomain
-		}
-	}
-
-	// Resolve Internal: top-level > cloud.internal
-	// Use viper.IsSet to distinguish "user explicitly set internal=false" from "default false".
-	// Without this check, cloud.internal=true would incorrectly override an explicit internal=false.
-	if !viper.IsSet("internal") && c.Cloud.Internal {
-		c.Internal = true
-		printDeprecationWarning("cloud.internal", "internal")
-	}
-
-	// Normalize: merge Internal flag into Domain.
-	// This ensures all endpoint functions can simply use c.Domain without branching on c.Internal.
-	// The "internal" segment sits between region and base domain: {prefix}.{region}.internal.{domain}
-	// By prepending "internal." to Domain here, all downstream fmt.Sprintf("%s.%s", region, domain)
-	// calls automatically produce the correct result.
-	if c.Internal && !strings.HasPrefix(c.Domain, "internal.") {
-		c.Domain = "internal." + c.Domain
+		c.Domain = defaultDomain
 	}
 }
 
-// printDeprecationWarning prints a deprecation warning for a legacy config field
-func printDeprecationWarning(oldField, newField string) {
-	fmt.Fprintf(os.Stderr, "Warning: config field \"%s\" is deprecated, please use top-level \"%s\" instead.\n", oldField, newField)
+// CheckConfigFilePermissions returns a warning when a credential-bearing config file is too permissive.
+func CheckConfigFilePermissions() string {
+	path := configFileUsed
+	if path == "" || !configFileContainsCredentials() {
+		return ""
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		return ""
+	}
+	if info.Mode().Perm()&0o077 != 0 {
+		return fmt.Sprintf("config file %q contains credentials and is readable by group or others; consider chmod 600", path)
+	}
+	return ""
 }
 
-// Get returns the current configuration
+func configFileContainsCredentials() bool {
+	return viper.InConfig("auth.secret_id") || viper.InConfig("auth.secret_key")
+}
+
+// ConfigFilePath returns the active or default config file path.
+func ConfigFilePath() string {
+	if configFileUsed != "" {
+		return configFileUsed
+	}
+	if cfgFile != "" {
+		return cfgFile
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+	return filepath.Join(home, ".agr", "config.toml")
+}
+
+// ConfigFileLoaded reports whether Init loaded a config file.
+func ConfigFileLoaded() bool { return configFileUsed != "" }
+
+// ConfigFileFound reports whether Init found a config file.
+func ConfigFileFound() bool { return configFileSeen }
+
+// Get returns the process-wide configuration, initializing defaults if needed.
 func Get() *Config {
 	if cfg == nil {
-		cfg = &Config{
-			Backend:  "e2b",
-			Output:   "text",
-			Region:   defaultRegion,
-			Domain:   defaultDomain,
-			Internal: false,
-		}
+		cfg = &Config{Output: "text", Region: defaultRegion, Domain: defaultDomain}
 	}
 	return cfg
 }
 
-// GetBackend returns the current backend type
-func GetBackend() string {
-	return Get().Backend
+// GetBackend returns the active backend name.
+func GetBackend() string { return "cloud" }
+
+// SetBackend is retained for compatibility with older callers.
+func SetBackend(_ string) {}
+
+// GetOutput returns the configured output format.
+func GetOutput() string { return Get().Output }
+
+// SetOutput sets the configured output format.
+func SetOutput(o string) { Get().Output = o; setSource("output", "flag") }
+
+// GetRegion returns the configured TencentCloud region.
+func GetRegion() string { return Get().Region }
+
+// SetRegion sets the configured TencentCloud region.
+func SetRegion(r string) { Get().Region = r; setSource("region", "flag") }
+
+// GetDomain returns the configured data-plane domain.
+func GetDomain() string { return Get().Domain }
+
+// GetCloudEndpoint returns the resolved control-plane endpoint.
+func GetCloudEndpoint() string { return Get().ControlPlaneEndpoint() }
+
+// GetCloudEndpointRaw returns the explicitly configured control-plane endpoint.
+func GetCloudEndpointRaw() string { return Get().CloudEndpoint }
+
+// SetCloudEndpoint sets the control-plane endpoint override.
+func SetCloudEndpoint(endpoint string) {
+	Get().CloudEndpoint = endpoint
+	setSource("cloud_endpoint", "flag")
 }
 
-// SetBackend sets the backend type (for command line override)
-func SetBackend(backend string) {
-	Get().Backend = backend
+// GetAPIKey returns the legacy API key value, which is no longer configured.
+func GetAPIKey() string { return "" }
+
+// SetAPIKey is retained for compatibility with older callers.
+func SetAPIKey(_ string) {}
+
+// GetSecretID returns the TencentCloud secret ID.
+func GetSecretID() string { return Get().Auth.SecretID }
+
+// SetSecretID sets the TencentCloud secret ID.
+func SetSecretID(id string) { Get().Auth.SecretID = id; setSource("secret_id", "flag") }
+
+// GetSecretKey returns the TencentCloud secret key.
+func GetSecretKey() string { return Get().Auth.SecretKey }
+
+// SetSecretKey sets the TencentCloud secret key.
+func SetSecretKey(k string) { Get().Auth.SecretKey = k; setSource("secret_key", "flag") }
+
+// GetSandboxUser returns the default sandbox user.
+func GetSandboxUser() string { return Get().Sandbox.DefaultUser }
+
+// SetSandboxUser sets the default sandbox user.
+func SetSandboxUser(u string) {
+	Get().Sandbox.DefaultUser = u
+	setSource("default_user", "flag")
 }
 
-// GetOutput returns the current output format
-func GetOutput() string {
-	return Get().Output
+// GetSource returns where a config key's current value came from.
+func GetSource(key string) string {
+	if sources == nil {
+		return ""
+	}
+	return sources[key]
 }
 
-// SetOutput sets the output format (for command line override)
-func SetOutput(output string) {
-	Get().Output = output
-}
-
-// GetRegion returns the unified region
-func GetRegion() string {
-	return Get().Region
-}
-
-// SetRegion sets the unified region (for command line override)
-func SetRegion(region string) {
-	Get().Region = region
-}
-
-// GetDomain returns the unified domain
-func GetDomain() string {
-	return Get().Domain
-}
-
-// SetDomain sets the unified domain (for command line override)
+// SetDomain sets the data-plane domain.
 func SetDomain(domain string) {
 	c := Get()
 	c.Domain = domain
-	// Re-normalize: if internal is enabled, ensure domain has the prefix
-	if c.Internal && !strings.HasPrefix(c.Domain, "internal.") {
-		c.Domain = "internal." + c.Domain
+	setSource("domain", "flag")
+}
+
+func setSource(key, source string) {
+	if sources == nil {
+		sources = map[string]string{}
 	}
+	sources[key] = source
 }
 
-// GetInternal returns whether to use internal endpoints
-func GetInternal() bool {
-	return Get().Internal
-}
-
-// SetInternal sets whether to use internal endpoints (for command line override)
-func SetInternal(internal bool) {
-	c := Get()
-	c.Internal = internal
-	// Normalize domain based on new internal flag
-	if internal && !strings.HasPrefix(c.Domain, "internal.") {
-		c.Domain = "internal." + c.Domain
-	} else if !internal && strings.HasPrefix(c.Domain, "internal.") {
-		c.Domain = strings.TrimPrefix(c.Domain, "internal.")
-	}
-}
-
-// GetE2BConfig returns E2B configuration
-func GetE2BConfig() E2BConfig {
-	return Get().E2B
-}
-
-// SetE2BAPIKey sets E2B API key (for command line override)
-func SetE2BAPIKey(key string) {
-	Get().E2B.APIKey = key
-}
-
-// SetE2BDomain sets E2B domain (for command line override)
-// Deprecated: Use SetDomain instead.
-// Note: This function is only called from the legacy --e2b-domain flag path in initConfig.
-// The condition below checks whether the top-level domain is still at its default value;
-// if so, it syncs to the unified field. Even if it incorrectly syncs (e.g., user explicitly
-// set domain to the default), the unified --domain flag is always applied after legacy flags,
-// so it will correct any over-write.
-func SetE2BDomain(domain string) {
-	Get().E2B.Domain = domain
-	// Also update top-level domain if not explicitly set
-	if Get().Domain == defaultDomain || Get().Domain == "internal."+defaultDomain {
-		SetDomain(domain)
-	}
-}
-
-// SetE2BRegion sets E2B region (for command line override)
-// Deprecated: Use SetRegion instead.
-func SetE2BRegion(region string) {
-	Get().E2B.Region = region
-	// Also update top-level region if not explicitly set
-	if Get().Region == defaultRegion {
-		Get().Region = region
-	}
-}
-
-// GetCloudConfig returns Cloud API configuration
-func GetCloudConfig() CloudConfig {
-	return Get().Cloud
-}
-
-// SetCloudSecretID sets Cloud API SecretID (for command line override)
-func SetCloudSecretID(id string) {
-	Get().Cloud.SecretID = id
-}
-
-// SetCloudSecretKey sets Cloud API SecretKey (for command line override)
-func SetCloudSecretKey(key string) {
-	Get().Cloud.SecretKey = key
-}
-
-// SetCloudRegion sets Cloud API region (for command line override)
-// Deprecated: Use SetRegion instead.
-func SetCloudRegion(region string) {
-	Get().Cloud.Region = region
-	// Also update top-level region if not explicitly set
-	if Get().Region == defaultRegion {
-		Get().Region = region
-	}
-}
-
-// SetCloudInternal sets whether to use internal endpoints (for command line override)
-// Deprecated: Use SetInternal instead.
-func SetCloudInternal(internal bool) {
-	Get().Cloud.Internal = internal
-	// Always sync to top-level internal
-	SetInternal(internal)
-}
-
-// GetSandboxUser returns the default sandbox user
-func GetSandboxUser() string {
-	return Get().Sandbox.DefaultUser
-}
-
-// SetSandboxUser sets the default sandbox user (for command line override)
-func SetSandboxUser(user string) {
-	Get().Sandbox.DefaultUser = user
-}
-
-// Validate validates the configuration
+// Validate checks that the current process configuration is usable.
 func Validate() error {
+	if err := ValidateBasics(); err != nil {
+		return err
+	}
 	c := Get()
-	if c.Backend != "e2b" && c.Backend != "cloud" {
-		return fmt.Errorf("invalid backend: %s (must be 'e2b' or 'cloud')", c.Backend)
+	if c.Auth.SecretID == "" || c.Auth.SecretKey == "" {
+		return output.NewAuthError("MISSING_CLOUD_CREDENTIALS",
+			"cloud API credentials are required",
+			"Run: agr init --secret-id <id> --secret-key <key>, or set TENCENTCLOUD_SECRET_ID and TENCENTCLOUD_SECRET_KEY.")
 	}
-	if c.Output != "text" && c.Output != "json" {
-		return fmt.Errorf("invalid output format: %s (must be 'text' or 'json')", c.Output)
-	}
+	return nil
+}
 
-	switch c.Backend {
-	case "e2b":
-		if c.E2B.APIKey == "" {
-			return fmt.Errorf("E2B API key is required (set AGS_E2B_API_KEY or e2b.api_key in config)")
-		}
-	case "cloud":
-		if c.Cloud.SecretID == "" || c.Cloud.SecretKey == "" {
-			return fmt.Errorf("cloud API credentials are required (set AGS_CLOUD_SECRET_ID/AGS_CLOUD_SECRET_KEY or cloud.secret_id/cloud.secret_key in config)")
+// ValidateBasics checks non-secret configuration values.
+func ValidateBasics() error {
+	return ValidateCandidate(*Get())
+}
+
+// ValidateCandidate checks a candidate config without making it process-global.
+func ValidateCandidate(c Config) error {
+	applyDefaults(&c)
+	return validateBasics(&c)
+}
+
+func validateBasics(c *Config) error {
+	if c.Output != "text" && c.Output != "json" && c.Output != "ndjson" {
+		return fmt.Errorf("invalid output format: %s (must be 'text', 'json', or 'ndjson')", c.Output)
+	}
+	if !regionPattern.MatchString(c.Region) {
+		return fmt.Errorf("invalid region: %s", c.Region)
+	}
+	if err := validateDomain(c.Domain); err != nil {
+		return err
+	}
+	if c.CloudEndpoint != "" {
+		if err := validateCloudEndpoint(c.CloudEndpoint); err != nil {
+			return err
 		}
 	}
+	return nil
+}
 
+func validateCloudEndpoint(endpoint string) error {
+	if endpoint == "" {
+		return fmt.Errorf("invalid cloud endpoint: empty (must be a complete hostname like ags.tencentcloudapi.com)")
+	}
+	if strings.Contains(endpoint, "://") {
+		return fmt.Errorf("invalid cloud endpoint: %s (must be a hostname without scheme; use ags.tencentcloudapi.com)", endpoint)
+	}
+	if strings.Contains(endpoint, "/") {
+		return fmt.Errorf("invalid cloud endpoint: %s (must be a hostname without path)", endpoint)
+	}
+	if strings.ContainsAny(endpoint, " \t\r\n") {
+		return fmt.Errorf("invalid cloud endpoint: %s (must not contain whitespace)", endpoint)
+	}
+	if u, err := url.Parse("https://" + endpoint); err != nil || u.Hostname() == "" || u.Host != endpoint {
+		return fmt.Errorf("invalid cloud endpoint: %s (must be a hostname)", endpoint)
+	}
+	return nil
+}
+
+func validateDomain(domain string) error {
+	if domain == "" {
+		return fmt.Errorf("invalid domain: empty")
+	}
+	if strings.Contains(domain, "/") || strings.Contains(domain, "://") {
+		return fmt.Errorf("invalid domain: %s (must be a hostname without scheme or path)", domain)
+	}
+	if strings.ContainsAny(domain, " \t\r\n") {
+		return fmt.Errorf("invalid domain: %s (must not contain whitespace)", domain)
+	}
+	if u, err := url.Parse("https://" + domain); err != nil || u.Hostname() == "" || u.Host != domain {
+		return fmt.Errorf("invalid domain: %s (must be a hostname)", domain)
+	}
 	return nil
 }

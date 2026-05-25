@@ -1,8 +1,13 @@
 /*-ref
 
 # Build output
-/ags
+/agr
 /build/
+
+# Generated documentation. docs/ markdown and man/ pages are produced
+# by maintainer-only `cmd/internal/docgen` (NextPlan §9.5) and are NOT
+# committed to the repository.
+/docs/
 /man/
 
 # IDE

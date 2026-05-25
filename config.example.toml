@@ -1,43 +1,14 @@
-# AGS CLI Configuration File
-# Copy this file to ~/.ags/config.toml and modify as needed
+# AGR CLI Configuration File
+# Copy to ~/.agr/config.toml and fill in credentials.
 
-# Backend type: "e2b" or "cloud"
-backend = "e2b"
+# output = "text"                              # Optional default for non-streaming commands (text or json)
+# region = "ap-guangzhou"                      # Optional (default: ap-guangzhou)
+# domain = "tencentags.com"                    # Optional (default: tencentags.com)
+# cloud_endpoint = "ags.tencentcloudapi.com"   # Optional (default: ags.tencentcloudapi.com)
 
-# Default output format: "text" or "json"
-output = "text"
+[auth]
+secret_id = ""    # Required
+secret_key = ""   # Required
 
-# Region for API access (default: ap-guangzhou)
-# region = "ap-guangzhou"
-
-# Base domain for AGS services (default: tencentags.com)
-# domain = "tencentags.com"
-
-# Use internal endpoints for Tencent Cloud internal network (default: false)
-# When true, "internal." is automatically prepended to the domain, e.g.:
-#   - E2B control plane: api.{region}.internal.tencentags.com
-#   - Cloud control plane: ags.internal.tencentcloudapi.com
-#   - Data plane: {port}-{id}.{region}.internal.tencentags.com
-# internal = false
-
-# E2B API Configuration
-[e2b]
-api_key = ""
-# Deprecated: use top-level "domain" instead
-# domain = "tencentags.com"
-# Deprecated: use top-level "region" instead
-# region = "ap-guangzhou"
-
-# Cloud API Configuration (Tencent Cloud)
-[cloud]
-secret_id = ""
-secret_key = ""
-# Deprecated: use top-level "region" instead
-# region = "ap-guangzhou"
-# Deprecated: use top-level "internal" instead
-# internal = false
-
-# Sandbox Configuration
-[sandbox]
-# Default user for data plane operations (default: "user")
-# default_user = "user"
+# [sandbox]
+# default_user = "user"   # Optional (default: user)

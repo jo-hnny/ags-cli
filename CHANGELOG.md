@@ -2,6 +2,43 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.0] - 2026-05-22
+
+### Breaking Changes
+- 0.5.0 is not backward-compatible with 0.4.0. Command layout, flag
+  sets, request input handling, and machine-readable output all change
+  significantly in this release.
+- Existing shell scripts, wrappers, CI jobs, and any automation that
+  calls `agr` should be reviewed before upgrading.
+- If you consume JSON or NDJSON output, revalidate parsers against the
+  new `agr.v1` / `agr.events.v1` contracts.
+
+### Features
+- The CLI is reorganized around a clearer resource-oriented command
+  tree, with more consistent help text and machine-readable command
+  metadata.
+- New support commands are available for day-to-day use:
+  `agr schema`, `agr doctor`, `agr explain`, and
+  `agr config {show,set,path}`.
+- `agr instance code run` and `agr instance exec` now support temporary
+  sandbox workflows with `--create-temp-instance`, cleanup policy
+  control, and `Data.ExecutionContext` in JSON output.
+- `agr api call <Action> --request ...` provides a raw control-plane
+  escape hatch for advanced debugging and unsupported operations.
+- Control-plane endpoint selection (`--cloud-endpoint`) and data-plane
+  domain selection (`--domain`) are now clearly separated.
+- JSON output and streaming behavior are more consistent across the CLI,
+  including richer failure metadata and execution context reporting.
+
+### Bug Fixes
+- This release has no Bug Fixes.
+
+### Docs
+- Refresh the README and changelog to document the `agr` command
+  surface, the `0.5.0` migration, and the updated quick-start guidance.
+- Use `agr --help` and `agr schema <command> -o json` as the primary
+  references when updating existing automation to the new surface.
+
 ## [0.4.0] - 2026-04-28
 
 ### Added

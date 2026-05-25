@@ -1,243 +1,243 @@
-# AGS CLI
+# AGR CLI
 
 [中文文档](README-zh.md)
 
-AGS CLI is a command-line tool for managing Tencent Cloud Agent Sandbox (AGS). It provides a convenient way to manage sandbox tools, instances, and execute code in isolated environments.
-
-## Features
-
-- **Tool Management**: Create, list, and delete sandbox tools (templates)
-- **Instance Management**: Start/stop sandbox instances with flexible lifecycle control
-- **Code Execution**: Execute code in multiple languages (Python, JavaScript, TypeScript, R, Java, Bash)
-- **Shell Command Execution**: Run shell commands in sandbox with streaming support
-- **File Operations**: Upload, download, and manage files in sandbox
-- **Dual Backend Support**: Support both E2B API and Tencent Cloud API
-- **Port Forwarding**: Forward sandbox ports to localhost, with full HTTP and WebSocket support
-- **Mobile Sandbox ADB Access**: Secure ADB access to remote Android sandboxes via WebSocket tunnels
-- **Interactive REPL**: Built-in interactive mode with auto-completion
-- **Streaming Output**: Real-time output streaming for long-running code
+AGR CLI manages Tencent Cloud Agent Runtime instances, tools, API keys, and data-plane operations from the `agr` command.
 
 ## Installation
 
-### Using go install
-
-```bash
-go install github.com/TencentCloudAgentRuntime/ags-cli@latest
-```
-
-**Note**: The installed command will be `ags-cli`. If you prefer to use `ags` as the command name, you can create an alias:
-
-```bash
-# Add to your shell configuration file (~/.zshrc, ~/.bashrc, etc.)
-alias ags='ags-cli'
-
-# Reload your shell configuration
-source ~/.zshrc  # or source ~/.bashrc
-```
-
-### From Source
+### From source
 
 ```bash
 git clone https://github.com/TencentCloudAgentRuntime/ags-cli.git
 cd ags-cli
 make build
+sudo cp agr /usr/local/bin/agr
 ```
 
-### Cross-platform Build
+### Using `go install`
 
 ```bash
-make build-all  # Build for Linux, macOS, Windows
+go install github.com/TencentCloudAgentRuntime/ags-cli/cmd/agr@latest
 ```
 
-## Configuration
+The installed command name is `agr`.
 
-Create `~/.ags/config.toml`:
+## Prerequisites
 
-```toml
-backend = "e2b"
-output = "text"
+1. A [Tencent Cloud](https://cloud.tencent.com/) account
+2. AGR (Agent Runtime) service enabled
+3. API credentials (SecretID / SecretKey) — obtain from [CAM Console](https://console.cloud.tencent.com/cam/capi)
 
-[e2b]
-api_key = "your-e2b-api-key"
-domain = "tencentags.com"
-region = "ap-guangzhou"
-
-[cloud]
-secret_id = "your-secret-id"
-secret_key = "your-secret-key"
-region = "ap-guangzhou"
-```
-
-Or use environment variables:
+## Initialize CLI credentials
 
 ```bash
-export AGS_E2B_API_KEY="your-api-key"
-export AGS_CLOUD_SECRET_ID="your-secret-id"
-export AGS_CLOUD_SECRET_KEY="your-secret-key"
+export TENCENTCLOUD_SECRET_ID="your-secret-id"
+export TENCENTCLOUD_SECRET_KEY="your-secret-key"
+
+agr init \
+  --secret-id "$TENCENTCLOUD_SECRET_ID" \
+  --secret-key "$TENCENTCLOUD_SECRET_KEY"
 ```
 
-### Backend Differences
-
-AGS CLI supports two backends with different capabilities:
-
-| Feature | E2B Backend | Cloud Backend |
-|---------|-------------|---------------|
-| Authentication | API Key only | SecretID + SecretKey |
-| Tool Management | ✗ | ✓ |
-| Instance Operations | ✓ | ✓ |
-| Code Execution | ✓ | ✓ |
-| File Operations | ✓ | ✓ |
-| API Key Management | ✗ | ✓ |
-
-The **E2B configuration** provides compatibility with the E2B API. With E2B backend, you only need an API key for sandbox instance operations (create, list, delete instances, execute code, file operations), but you cannot manage sandbox tools.
-
-To manage sandbox tools (list/get/create/update/delete) and API keys, you must use the **Cloud backend** with Tencent Cloud SecretID and SecretKey. You can obtain your AKSK from: https://console.cloud.tencent.com/cam/capi
-
-### Architecture: Control Plane vs Data Plane
-
-AGS CLI separates operations into two layers:
-
-- **Control Plane**: Instance lifecycle management (create/delete/list), tool management, API key management
-  - E2B Backend: Uses API Key + E2B REST API
-  - Cloud Backend: Uses AKSK + Tencent Cloud API
-  
-- **Data Plane**: Code execution, shell commands, file operations
-  - Both backends use the same E2B-compatible data plane gateway with Access Token
-
-The `backend` configuration only affects control plane operations. Data plane operations always use the E2B protocol via `ags-go-sdk`.
-
-Access tokens are automatically cached in `~/.ags/tokens.json` during instance creation and used for subsequent data plane operations
+`agr init` only writes local CLI configuration under `~/.agr/config.toml`; it does not create remote resources or modify the current project directory.
 
 ## Quick Start
 
 ```bash
-# Enter REPL mode
-ags
+export TENCENTCLOUD_SECRET_ID="your-secret-id"
+export TENCENTCLOUD_SECRET_KEY="your-secret-key"
 
-# List available tools
-ags tool list
+agr init \
+  --secret-id "$TENCENTCLOUD_SECRET_ID" \
+  --secret-key "$TENCENTCLOUD_SECRET_KEY"
 
-# Create an instance
-ags instance create -t code-interpreter-v1
+tool_name="quickstart-code-$(date +%s)-$$"
+tool_id=$(agr tool create \
+  --tool-name "$tool_name" \
+  --tool-type code-interpreter \
+  --network-configuration '{"NetworkMode":"SANDBOX"}' \
+  -o json --jq '.Data.ToolId')
 
-# Execute Python code
-ags run -c "print('Hello, World!')"
-
-# Execute with streaming output
-ags run -s -c "import time; [print(i) or time.sleep(1) for i in range(5)]"
-
-# Execute shell command
-ags exec "ls -la"
-
-# Upload/download files
-ags file upload local.txt /home/user/remote.txt
-ags file download /home/user/file.txt ./local.txt
+instance_id=$(agr instance create --tool-id "$tool_id" -o json --jq '.Data.InstanceId')
+agr instance code run "$instance_id" -c "print('Hello, World!')"
+agr instance delete "$instance_id" --ignore-not-found
+agr tool delete "$tool_id" || true
 ```
 
-## Port Forwarding
+The example creates a unique tool name first because tool names must be unique within the current AppId.
 
-`ags proxy` forwards a remote sandbox port to localhost, similar to `kubectl port-forward`. Both HTTP and WebSocket protocols are fully supported.
+## Temporary sandbox workflow
+
+`agr instance code run` and `agr instance exec` accept
+`--create-temp-instance` to spin up a sandbox just for this single
+execution, and clean it up automatically. The referenced tool must
+already exist; create one first with `agr tool create`, then pass
+`--tool-name` or `--tool-id`:
 
 ```bash
-# Forward sandbox port 8080 to localhost:8080
-ags proxy sandbox-xxx 8080
+# Create a temporary instance, run a snippet, delete it always (cleanup=always is the default).
+agr instance code run \
+  --create-temp-instance \
+  --tool-id "$tool_id" \
+  -c "print('hello')"
 
-# Forward sandbox port 8080 to a different local port
-ags proxy sandbox-xxx 3000:8080
+# Same workflow, but keep the temporary instance for debugging.
+agr instance exec \
+  --create-temp-instance \
+  --tool-id "$tool_id" \
+  --cleanup never \
+  -- python -V
 ```
 
-> **Note**: Before using this command, open the target port in the AGS sandbox console: navigate to your sandbox instance → **Network** → **Open Port**, and add the remote port number to the allowlist. Requests to ports that have not been configured will be rejected by the gateway.
+`--cleanup` accepts `always` (default), `success`, or `never`. To keep
+the temporary instance after the run, use `--cleanup never`. There is
+no `--keep-temp-instance`.
 
-## Mobile Sandbox (ADB Access)
+The JSON output of these commands includes
+`Data.ExecutionContext.SandboxInstanceId`,
+`Data.ExecutionContext.TemporarySandboxInstance` and
+`Data.ExecutionContext.Cleanup` so scripts can inspect the workflow.
 
-For **mobile** type sandboxes (Android), AGS CLI provides secure ADB access via WebSocket tunnels. This allows you to use standard `adb` commands to interact with remote Android sandbox instances.
+## Cloud endpoint vs data-plane domain
 
-### Prerequisites
+| Flag                         | Default                  | Controls                         |
+|------------------------------|--------------------------|----------------------------------|
+| `--cloud-endpoint`           | `ags.tencentcloudapi.com`| Control-plane API endpoint       |
+| `--domain`                   | `tencentags.com`         | Data-plane domain (browser, exec)|
 
-- A mobile type sandbox tool (e.g., Android 13 sandbox)
-- Local `adb` installed ([Android SDK Platform Tools](https://developer.android.com/tools/releases/platform-tools))
+`--cloud-endpoint` affects every control-plane call (regular resource
+commands and `agr api call`). `--domain` only affects data-plane access. Both can
+also be set via `cloud_endpoint` / `domain` in `~/.agr/config.toml` or
+`AGR_CLOUD_ENDPOINT` / `AGR_DOMAIN` environment variables.
 
-### Workflow
+## Low-level API access
+
+For undocumented fields or debugging, use the raw API channel:
 
 ```bash
-# Step 1: Create a mobile sandbox instance
-ags instance create -t <mobile-tool-name>
-# ✓ Instance created: 8d7a3c17ef84******************************e73c58
-
-# Step 2: Connect to the mobile sandbox via ADB tunnel
-ags mobile connect 8d7a3c17ef84******************************e73c58
-# connected to 127.0.0.1:61876
-# ℹ connected to 8d7a3c17ef84******************************e73c58 (127.0.0.1:61876)
-# ℹ tunnel log: /Users/<user>/.ags/tunnel-8d7a3c17ef84******************************e73c58.log
-
-# Step 3: List active mobile connections and verify ADB device
-ags mobile list
-# SANDBOX                                   ADB ADDRESS        STATUS
-# 8d7a3c17ef84******************************e73c58  127.0.0.1:61876    connected
-adb devices
-# List of devices attached
-# 127.0.0.1:61876    device
-
-# Step 4: Now you can use any native adb commands (shell, install, push, pull, screencap, etc.)
-adb -s 127.0.0.1:61876 shell getprop ro.build.display.id
-
-# Step 5: Disconnect when done
-ags mobile disconnect 8d7a3c17ef84******************************e73c58
-# ℹ disconnected from 8d7a3c17ef84******************************e73c58
-
-# Or disconnect all active connections at once
-ags mobile disconnect --all
+agr api call DescribeSandboxInstanceList --request '{"Limit":1}' -o json
+agr api call StartSandboxInstance --request @start.json
+agr api call StopSandboxInstance --request - < stop.json
 ```
 
-> **Note**: The `ags mobile` commands are only applicable to **mobile** type sandbox instances (e.g., Android sandboxes). They do not apply to regular code execution sandboxes.
+## Command Overview
 
-## Command Reference
+```text
+agr                              Print help
+agr init                         Initialize local CLI config and credentials
+agr version                      Version info
+agr status                       Current configuration status
+agr schema [command]             Machine-readable command schema
+agr doctor                       Diagnose configuration and connectivity
+agr explain <CODE>               Explain errors and fixes
 
-For detailed documentation on each command, see:
+agr instance create              Create a new instance
+agr instance list                List instances
+agr instance get <id>            Get instance details
+agr instance update <id>         Update timeout/metadata
+agr instance pause <id>          Pause an instance
+agr instance resume <id>         Resume an instance
+agr instance delete <id>         Delete instance(s)
 
-| Command | Aliases | Description | Documentation |
-|---------|---------|-------------|---------------|
-| `tool` | `t` | Tool management | [ags-tool](docs/ags-tool.md) |
-| `instance` | `i` | Instance management | [ags-instance](docs/ags-instance.md) |
-| `run` | `r` | Code execution | [ags-run](docs/ags-run.md) |
-| `exec` | `x` | Shell command execution | [ags-exec](docs/ags-exec.md) |
-| `file` | `f`, `fs` | File operations | [ags-file](docs/ags-file.md) |
-| `proxy` | - | Port forwarding | [ags-proxy](docs/ags-proxy.md) |
-| `mobile` | `m` | Mobile sandbox ADB access | [ags-mobile](docs/ags-mobile.md) |
-| `apikey` | `ak`, `key` | API key management | [ags-apikey](docs/ags-apikey.md) |
+agr instance code run <id>       Execute code in an existing instance
+agr instance exec <id> -- CMD    Execute shell command in an existing instance
+agr instance file upload <id>    Upload file to an existing instance
+agr instance file download <id>  Download file from an existing instance
+agr instance login <id>          PTY terminal session
+agr instance browser vnc <id>    Show VNC URL
+agr instance proxy <id> PORT     Forward instance port to localhost
+agr instance mobile ...          Mobile ADB operations
 
-See [ags](docs/ags.md) for global options and configuration details.
-
-### Man Pages
-
-Generate and install man pages for offline documentation:
-
-```bash
-# Generate man pages
-make man
-
-# Install to system (requires sudo)
-make install-man
-
-# View documentation
-man ags
-man ags-tool
-man ags-instance
+agr tool list/create/get/update/delete
+agr apikey create/list/delete
+agr pre-cache-image-task create|get
+agr completion bash|zsh|fish|powershell
 ```
 
-## Shell Completion
+## Machine-readable output and `--jq`
+
+Commands that support `-o json` return one `agr.v1` envelope on stdout:
+
+```json
+{
+  "SchemaVersion": "agr.v1",
+  "Command": "instance.create",
+  "Status": "succeeded",
+  "Data": { "InstanceId": "sandbox-xxx", "ToolName": "my-tool" },
+  "Failure": null,
+  "Warnings": [],
+  "Meta": { "DurationMs": 123 }
+}
+```
+
+Examples:
 
 ```bash
-# Bash
-ags completion bash > /etc/bash_completion.d/ags
+agr instance create --tool-id "$tool_id" -o json --jq '.Data.InstanceId'
+agr instance list -o json --jq '.Data.Items[].InstanceId'
+agr status -o json --jq '.Data.Region'
+agr schema -o json --jq '.Data.ExitCodes'
+```
 
-# Zsh
-ags completion zsh > "${fpath[1]}/_ags"
+`--jq` must be used with `-o json`.
 
-# Fish
-ags completion fish > ~/.config/fish/completions/ags.fish
+## Streaming
+
+Only `instance code run` and `instance exec` support machine-readable streaming:
+
+```bash
+agr instance code run "$id" -c "print(1)" --stream -o ndjson
+agr instance exec "$id" --stream -o ndjson -- tail -f app.log
+```
+
+Each stdout line is one `agr.events.v1` JSON event.
+
+## Exit Codes
+
+| Exit | Kind | Description |
+|---:|---|---|
+| 0 | success | OK |
+| 1 | error | Non-usage, non-auth CLI or API failure; inspect `Failure.Kind` for details |
+| 2 | usage | Invalid args, flags, input, or unsupported output mode |
+| 4 | auth | Missing credentials, authentication failure, or permission failure |
+| 255 | remote_execution_failed | Remote code execution failure |
+
+`instance exec` and `instance mobile adb` may also pass through downstream process exit codes in the range `0-255`.
+
+See `agr schema -o json --jq '.Data.ExitCodes'` for the full list.
+
+## Global Flags
+
+```text
+--config          Config file path (default: ~/.agr/config.toml)
+-o, --output      Output format: text, json, or ndjson (`ndjson` only when explicitly passed to supported streaming commands)
+--jq              jq expression (only with -o json)
+--region          Tencent Cloud region (default: ap-guangzhou)
+--cloud-endpoint  Control-plane API endpoint (default: ags.tencentcloudapi.com)
+--domain          Data-plane domain (default: tencentags.com)
+--secret-id       Tencent Cloud SecretID
+--secret-key      Tencent Cloud SecretKey
+--non-interactive Disable interactive behavior
+--no-color        Disable ANSI color
+--debug           Write debug diagnostics to stderr
+```
+
+Environment variables: `TENCENTCLOUD_SECRET_ID`, `TENCENTCLOUD_SECRET_KEY`, `AGR_OUTPUT`, `AGR_REGION`, `AGR_CLOUD_ENDPOINT`, `AGR_DOMAIN`, `AGR_NON_INTERACTIVE`, `AGR_DEBUG`, `NO_COLOR`.
+
+`AGR_OUTPUT` is intended for default `text` or `json` output. For streaming, pass `-o ndjson` explicitly with `agr instance code run --stream` or `agr instance exec --stream`.
+
+Configuration priority: `--flag` > environment variable > `~/.agr/config.toml` > default. Use `agr status` to inspect resolved values and their sources.
+
+## Troubleshooting
+
+```bash
+agr status
+agr doctor
+agr explain AUTH_FAILED
+agr schema instance.create -o json
 ```
 
 ## License
 
-This project is open-sourced under the Apache License 2.0. See [LICENSE](LICENSE-AGS%20CLI.txt) file for details.
+See [LICENSE](LICENSE-AGR%20CLI.txt).
