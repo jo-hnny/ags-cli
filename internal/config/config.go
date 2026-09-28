@@ -3,6 +3,7 @@
 package config
 
 import (
+	"errors"
 	"fmt"
 	"net/url"
 	"os"
@@ -107,7 +108,11 @@ func Init() error {
 
 	if err := viper.ReadInConfig(); err != nil {
 		if _, ok := err.(viper.ConfigFileNotFoundError); !ok {
-			return fmt.Errorf("failed to read config file: %w", err)
+			var pathErr *os.PathError
+			if errors.As(err, &pathErr) {
+				return output.WithContext(fmt.Errorf("failed to read config file: %w", err), map[string]any{"Stage": "config_read"})
+			}
+			return configParseError("config_parse", err)
 		}
 	}
 	configFileUsed = viper.ConfigFileUsed()
@@ -115,12 +120,24 @@ func Init() error {
 
 	nextCfg := &Config{}
 	if err := viper.Unmarshal(nextCfg); err != nil {
-		return fmt.Errorf("failed to unmarshal config: %w", err)
+		return configParseError("config_decode", err)
 	}
 	applyDefaults(nextCfg)
 	cfg = nextCfg
 	initSources()
 	return nil
+}
+
+// A failed load has not registered its secrets with the output redactor. Parser
+// and decoder messages can quote those values, so retain locations, not input.
+func configParseError(stage string, err error) error {
+	details := map[string]any{"Stage": stage, "Path": ConfigFilePath()}
+	var positioned interface{ Position() (int, int) }
+	if errors.As(err, &positioned) {
+		row, column := positioned.Position()
+		details["Line"], details["Column"] = row, column
+	}
+	return output.WithContext(errors.New("failed to parse config file; check TOML syntax and field types"), details)
 }
 
 func initSources() {

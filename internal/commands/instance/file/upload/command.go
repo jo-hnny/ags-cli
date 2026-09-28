@@ -131,11 +131,11 @@ func uploadReader(localPath string, stdin io.Reader) (io.Reader, int64, func(), 
 	}
 	info, err := os.Stat(localPath)
 	if err != nil {
-		return nil, 0, func() {}, output.NewUsageError("INVALID_LOCAL_PATH", fmt.Sprintf("failed to stat local file: %v", err), "Provide an existing local file path or use - for stdin.")
+		return nil, 0, func() {}, output.NewUsageError("INVALID_LOCAL_PATH", fmt.Sprintf("failed to stat local file: %v", err), "Provide an existing local file path or use - for stdin.").WithCause(err)
 	}
 	f, err := os.Open(localPath)
 	if err != nil {
-		return nil, 0, func() {}, output.NewUsageError("INVALID_LOCAL_PATH", fmt.Sprintf("failed to open local file: %v", err), "Ensure the local file exists and is readable.")
+		return nil, 0, func() {}, output.NewUsageError("INVALID_LOCAL_PATH", fmt.Sprintf("failed to open local file: %v", err), "Ensure the local file exists and is readable.").WithCause(err)
 	}
 	return f, info.Size(), func() { _ = f.Close() }, nil
 }

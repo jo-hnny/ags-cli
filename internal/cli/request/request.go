@@ -33,7 +33,7 @@ func ReadFlagFrom(value string, stdin io.Reader) ([]byte, error) {
 		if err != nil {
 			return nil, output.NewUsageError("INVALID_REQUEST_INPUT",
 				fmt.Sprintf("failed to read request from stdin: %v", err),
-				"Provide valid JSON via stdin, an inline string, or @file.")
+				"Provide valid JSON via stdin, an inline string, or @file.").WithCause(output.WithContext(err, map[string]any{"Stage": "request_input", "Path": "stdin"}))
 		}
 		return data, nil
 	case strings.HasPrefix(value, "@"):
@@ -41,7 +41,7 @@ func ReadFlagFrom(value string, stdin io.Reader) ([]byte, error) {
 		if err != nil {
 			return nil, output.NewUsageError("INVALID_REQUEST_INPUT",
 				fmt.Sprintf("failed to read request file %s: %v", value[1:], err),
-				"Check that the request file exists and is readable.")
+				"Check that the request file exists and is readable.").WithCause(output.WithContext(err, map[string]any{"Stage": "request_input", "Field": "request"}))
 		}
 		return data, nil
 	default:
@@ -59,7 +59,7 @@ func ParseFlag(value string) (map[string]any, error) {
 	if err := DecodeJSON(data, &raw); err != nil {
 		return nil, output.NewUsageError("INVALID_REQUEST_JSON",
 			fmt.Sprintf("invalid JSON in --request: %v", err),
-			"Provide valid JSON as a string, @file, or - for stdin.")
+			"Provide valid JSON as a string, @file, or - for stdin.").WithCause(output.WithContext(err, map[string]any{"Stage": "request_input", "Field": "request"}))
 	}
 	result, ok := raw.(map[string]any)
 	if !ok {
@@ -79,7 +79,7 @@ func ParseJSONFlagValue(flagName, value string, target any) error {
 	if err := DecodeJSON(data, target); err != nil {
 		return output.NewUsageError("INVALID_JSON_FLAG",
 			fmt.Sprintf("invalid JSON for --%s: %v", flagName, err),
-			fmt.Sprintf("Provide a valid JSON value for --%s, @file, or - for stdin.", flagName))
+			fmt.Sprintf("Provide a valid JSON value for --%s, @file, or - for stdin.", flagName)).WithCause(output.WithContext(err, map[string]any{"Stage": "request_parse", "Field": flagName}))
 	}
 	return nil
 }
@@ -94,7 +94,7 @@ func MergePositional(rawRequest, fieldName, positional string) ([]byte, error) {
 	if err := DecodeJSON(raw, &probe); err != nil {
 		return nil, output.NewUsageError("INVALID_REQUEST_JSON",
 			fmt.Sprintf("invalid JSON in --request: %v", err),
-			"Provide a valid JSON object as --request.")
+			"Provide a valid JSON object as --request.").WithCause(output.WithContext(err, map[string]any{"Stage": "request_input", "Field": "request"}))
 	}
 	if probe == nil {
 		return nil, output.NewUsageError("INVALID_REQUEST_JSON",
@@ -121,7 +121,7 @@ func ValidatePayload(commandID string, raw []byte) error {
 	if err := DecodeJSON(raw, &probe); err != nil {
 		return output.NewUsageError("INVALID_REQUEST_JSON",
 			fmt.Sprintf("invalid JSON in --request: %v", err),
-			fmt.Sprintf("Provide a valid JSON object as --request. Run 'agr schema %s -o json' for the field reference.", commandID))
+			fmt.Sprintf("Provide a valid JSON object as --request. Run 'agr schema %s -o json' for the field reference.", commandID)).WithCause(output.WithContext(err, map[string]any{"Stage": "request_parse", "Field": "request"}))
 	}
 	if _, ok := probe.(map[string]any); !ok {
 		return output.NewUsageError("INVALID_REQUEST_JSON",
