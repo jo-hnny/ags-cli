@@ -518,6 +518,18 @@ are redacted and bounded before being written to disk; the tail is redacted
 again before display. A log creation failure does not change the underlying
 failure classification and does not return a nonexistent log path.
 
+Mobile WebSocket handshake diagnostics include `Endpoint` (without user info,
+query or fragment) and `TimeoutMs` (the effective handshake budget, not elapsed
+time). Probes use 10 seconds and runtime connections use 15 seconds; a shorter
+context deadline reduces that budget. The stage remains `websocket_handshake`,
+including DNS, connection and TLS failures: the CLI does not infer an internal
+network phase. HTTP status is omitted when no response was received. Request IDs
+are taken only from `X-TC-RequestId`, then `X-Request-Id`, with a 256-byte limit
+and printable ASCII excluding spaces. Other response headers and bodies are not
+retained. These observations apply to startup/recovery probes and runtime
+connection failures; startup failures also preserve them across background
+readiness. Token acquisition remains a separate error boundary.
+
 Remote programs returning nonzero exit codes keep their existing output and
 exit-code semantics. Diagnostic availability does not make retries safe to replay.
 

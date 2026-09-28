@@ -131,6 +131,7 @@ func TestDaemonChild(t *testing.T) {
 		t.Fatal("debug flag not forwarded")
 	}
 	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-TC-RequestId", "ws-request-test")
 		w.WriteHeader(http.StatusForbidden)
 		_, _ = io.WriteString(w, "private-response-body")
 	}))
@@ -221,6 +222,12 @@ func TestDaemonFailureProcess(t *testing.T) {
 				}
 				if tc.code == "TUNNEL_AUTH_FAILED" && (envelope.Failure.Kind != output.KindAuthOrPermission || envelope.Failure.Details["HTTPStatus"] != float64(403)) {
 					t.Fatalf("lost child failure: %#v", envelope.Failure)
+				}
+				if tc.code == "TUNNEL_AUTH_FAILED" {
+					endpoint, _ := envelope.Failure.Details["Endpoint"].(string)
+					if !strings.HasPrefix(endpoint, "wss://127.0.0.1:") || envelope.Failure.Details["TimeoutMs"] != float64(10000) || envelope.Failure.Details["RequestId"] != "ws-request-test" {
+						t.Fatalf("lost handshake context: %#v", envelope.Failure.Details)
+					}
 				}
 				if tc.mode == "classified" && (envelope.Failure.Kind != output.KindConflict || envelope.Failure.Hint != "child hint" || envelope.Failure.Details["RequestId"] != "req-child") {
 					t.Fatalf("lost child contract: %#v", envelope.Failure)

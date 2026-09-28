@@ -30,7 +30,8 @@ func TestProbeFailureClassification(t *testing.T) {
 		{"auth", sdkerrors.NewTencentCloudSDKError("AuthFailure.Test", "denied", "req-test"), output.KindAuthOrPermission, "AuthFailure.Test", 4},
 		{"timeout", &adbtunnel.HandshakeError{Cause: context.DeadlineExceeded}, output.KindTimeout, "TIMEOUT", 1},
 		{"canceled", &adbtunnel.HandshakeError{Cause: context.Canceled}, output.KindGenericError, "CANCELED", 1},
-		{"handshake", &adbtunnel.HandshakeError{Cause: errors.New("bad handshake"), HTTPStatus: 502}, output.KindNetwork, "NETWORK_ERROR", 1},
+		{"handshake", &adbtunnel.HandshakeError{Cause: errors.New("bad handshake"), HTTPStatus: 502, Endpoint: "wss://endpoint.invalid/adb/ws", TimeoutMs: 10000, RequestID: "ws-req"}, output.KindNetwork, "NETWORK_ERROR", 1},
+		{"dns", &adbtunnel.HandshakeError{Cause: &net.DNSError{Err: "no such host", Name: "endpoint.invalid", IsNotFound: true}, Endpoint: "wss://endpoint.invalid/adb/ws", TimeoutMs: 10000}, output.KindNetwork, "DNS_ERROR", 1},
 		{"unauthorized", &adbtunnel.HandshakeError{Cause: errors.New("bad handshake"), HTTPStatus: 401}, output.KindAuthOrPermission, "TUNNEL_AUTH_FAILED", 4},
 		{"forbidden", &adbtunnel.HandshakeError{Cause: errors.New("bad handshake"), HTTPStatus: 403}, output.KindAuthOrPermission, "TUNNEL_AUTH_FAILED", 4},
 		{"token-client", errors.New("failed to create API client"), output.KindGenericError, "TUNNEL_ERROR", 1},
@@ -44,6 +45,12 @@ func TestProbeFailureClassification(t *testing.T) {
 			}
 			if tc.name == "handshake" && (got.Failure.Details["HTTPStatus"] != 502 || got.Failure.Details["Stage"] != "websocket_handshake") {
 				t.Fatalf("details=%#v", got.Failure.Details)
+			}
+			if tc.name == "handshake" && (got.Failure.Details["Endpoint"] != "wss://endpoint.invalid/adb/ws" || got.Failure.Details["TimeoutMs"] != int64(10000) || got.Failure.Details["RequestId"] != "ws-req") {
+				t.Fatalf("lost handshake context: %#v", got.Failure.Details)
+			}
+			if tc.name == "dns" && (got.Failure.Details["Stage"] != "websocket_handshake" || got.Failure.Details["HTTPStatus"] != nil || got.Failure.Details["RequestId"] != nil) {
+				t.Fatalf("invented DNS observations: %#v", got.Failure.Details)
 			}
 			if tc.name == "auth" && got.Failure.Details["RequestId"] != "req-test" {
 				t.Fatal("lost cloud RequestId")

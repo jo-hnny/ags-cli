@@ -108,7 +108,7 @@ func explainCodeData(code string) (ExplainData, bool) {
 	case "NETWORK_ERROR", "DNS_ERROR":
 		base.Kind = output.KindNetwork
 		base.ExitCode = output.ExitNetwork
-		base.Meaning = "A network operation failed. Mobile tunnel handshake failures may include Failure.Details.Stage=websocket_handshake and HTTPStatus when a response was received."
+		base.Meaning = "A network operation failed. Mobile tunnel handshakes report Failure.Details.Stage=websocket_handshake, Endpoint and TimeoutMs (budget, not elapsed time); HTTPStatus and an allowlisted RequestId are included only when observed."
 		base.AffectedCommands = allCommandNames()
 		base.Fix = []string{"Check the endpoint, network, DNS, and access credentials.", "Use --debug for the observed cause. A retry may repeat a business operation; check its outcome first."}
 	case "TUNNEL_START_FAILED", "TUNNEL_EXITED", "TUNNEL_PROTOCOL_ERROR", "TUNNEL_READY_TIMEOUT":
@@ -129,7 +129,7 @@ func explainCodeData(code string) (ExplainData, bool) {
 	case "TUNNEL_AUTH_FAILED":
 		base.Kind = output.KindAuthOrPermission
 		base.ExitCode = output.ExitAuthOrPermission
-		base.Meaning = "The tunnel WebSocket handshake received HTTP 401 or 403."
+		base.Meaning = "The tunnel WebSocket handshake received HTTP 401 or 403. Failure.Details includes Endpoint and TimeoutMs; RequestId is included when a valid allowlisted response header is available."
 		base.AffectedCommands = []string{"instance.mobile.tunnel", "instance.mobile.connect"}
 		base.Fix = []string{"Check the tunnel access token and permissions, then reconnect."}
 	case "TUNNEL_ERROR":
