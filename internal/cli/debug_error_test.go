@@ -182,6 +182,10 @@ func TestOrdinaryFailureCompatibility(t *testing.T) {
 
 func TestRedactionPreservesFailureContext(t *testing.T) {
 	for _, tc := range []struct{ raw, want string }{
+		{"Cookie: abc123", "Cookie: [REDACTED]"},
+		{"Cookie: abc123; upstream returned 403", "Cookie: [REDACTED]; upstream returned 403"},
+		{"Set-Cookie: abc123 upstream returned 403", "Set-Cookie: [REDACTED] upstream returned 403"},
+		{`"Cookie":"abc123", "reason":"upstream returned 403"`, `"Cookie":"[REDACTED]", "reason":"upstream returned 403"`},
 		{`Authorization: Digest username="user", response="private-signature"; upstream returned 403`, "Authorization: [REDACTED]; upstream returned 403"},
 		{`Authorization: Bearer "private-token"; upstream returned 403`, "Authorization: [REDACTED]; upstream returned 403"},
 		{"Authorization: Bearer private-token upstream returned 403", "Authorization: [REDACTED] upstream returned 403"},

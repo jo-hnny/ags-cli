@@ -37,6 +37,18 @@ func redactSensitive(text string) string {
 		for {
 			pair := diagnosticCookiePair.FindStringSubmatch(rest)
 			if pair == nil {
+				// A nonstandard bare header value may still be a credential.
+				// Only consume its first token, retaining following context.
+				if clean.Len() == 0 {
+					n := strings.IndexAny(rest, "; \t\r\n\"',")
+					if n < 0 {
+						n = len(rest)
+					}
+					if n > 0 {
+						clean.WriteString("[REDACTED]")
+						rest = rest[n:]
+					}
+				}
 				break
 			}
 			clean.WriteString(pair[1])

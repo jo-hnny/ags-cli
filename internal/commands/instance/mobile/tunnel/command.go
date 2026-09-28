@@ -145,7 +145,7 @@ func runTunnel(ctx context.Context, req command.Request, deps command.Deps, rt R
 	addr, err := tunnel.Start()
 	if err != nil {
 		writeReadyError(deps.IO.Out, daemon, fmt.Sprintf("failed to start tunnel: %v", err))
-		if errors.Is(err, syscall.EADDRINUSE) {
+		if isAddressInUse(err) {
 			return nil, output.NewUsageError("PORT_IN_USE", fmt.Sprintf("local port %d is already in use", port), "Choose another --port or use --port 0.").WithCause(err)
 		}
 		return nil, classifyTunnelError(fmt.Errorf("failed to start tunnel: %w", err))
