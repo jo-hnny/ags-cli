@@ -438,6 +438,11 @@ func writeFailureText(w io.Writer, failure *output.Failure) {
 	if logPath, ok := failure.Details["LogPath"].(string); ok && logPath != "" {
 		fmt.Fprintf(w, "LogPath: %s\n", logPath)
 	}
+	for _, field := range []string{"Stage", "Operation", "Program", "Path", "Field", "Endpoint", "HTTPStatus", "TimeoutMs", "ExitCode", "Line", "Column"} {
+		if value, ok := failure.Details[field]; ok {
+			fmt.Fprintf(w, "%s: %v\n", field, value)
+		}
+	}
 	if failure.Hint != "" {
 		fmt.Fprintf(w, "Hint: %s\n", failure.Hint)
 	}

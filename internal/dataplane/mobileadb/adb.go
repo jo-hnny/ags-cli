@@ -6,13 +6,14 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
-	"github.com/TencentCloudAgentRuntime/ags-cli/internal/output"
 	"io"
 	"os"
 	"os/exec"
 	"runtime"
 	"strings"
 	"time"
+
+	"github.com/TencentCloudAgentRuntime/ags-cli/internal/output"
 )
 
 // Require resolves the adb executable, preferring ADB_PATH when set. ADB_PATH is

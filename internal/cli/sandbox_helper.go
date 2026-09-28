@@ -3,7 +3,6 @@ package cli
 import (
 	"context"
 	"fmt"
-	"github.com/TencentCloudAgentRuntime/ags-cli/internal/output"
 
 	"github.com/TencentCloudAgentRuntime/ags-go-sdk/connection"
 	"github.com/TencentCloudAgentRuntime/ags-go-sdk/constant"
@@ -15,6 +14,7 @@ import (
 
 	"github.com/TencentCloudAgentRuntime/ags-cli/internal/config"
 	"github.com/TencentCloudAgentRuntime/ags-cli/internal/dataplane/token"
+	"github.com/TencentCloudAgentRuntime/ags-cli/internal/output"
 	ags "github.com/tencentcloud/tencentcloud-sdk-go/tencentcloud/ags/v20250920"
 )
 

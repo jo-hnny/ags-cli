@@ -3,9 +3,10 @@ package client
 import (
 	"context"
 	"errors"
-	sdkerrors "github.com/tencentcloud/tencentcloud-sdk-go/tencentcloud/common/errors"
 	"testing"
 	"time"
+
+	sdkerrors "github.com/tencentcloud/tencentcloud-sdk-go/tencentcloud/common/errors"
 )
 
 func TestCloudContextPreservesServiceFailure(t *testing.T) {

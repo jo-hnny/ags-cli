@@ -1,4 +1,4 @@
-# Error diagnostics coverage (Issue #138, steps 1, 2 and mobile WebSocket boundary)
+# Error diagnostics coverage (Issue #138, steps 1–3)
 
 The root `renderExecuteError` is the only error-chain printer. It prints before
 checking the already-written-output marker. The marker carries a cause but never
@@ -73,5 +73,43 @@ Running the new parent/child handshake assertions against the stage-2 handler
 and transport via a Go overlay fails with debug on and off because Endpoint,
 TimeoutMs and RequestId are missing.
 
-This slice does not complete the other HTTP clients, deployment proxy, local
-file/configuration or remote-execution boundaries planned in stage 3.
+## Stage 3: remaining boundaries
+
+- Local subprocess failures retain Program and observed subprocess_start/exit;
+  tunnel startup additionally retains its existing ready/wait/exit stages and
+  bounded redacted log diagnostics. A real test subprocess exits 17 in buffered
+  and streaming ADB modes without turning that business result into an error.
+- File PathErrors retain Operation/Path and the OS cause. Request input and file
+  upload/download usage errors no longer discard causes. A failed download to
+  stdout returns the read/write failure instead of reporting success.
+- Configuration read errors retain OS causes. Parse/decode errors retain safe
+  path/location metadata; raw parser input is deliberately not retained because
+  unloaded credential values are not yet registered with the redactor.
+- Exec/code, file transfer and webshell SDK errors carry remote_execute and the
+  operation/instance. Connection preparation carries remote_connect. PTY uses
+  local_terminal, remote_start and remote_stream based on observed progress.
+  Existing remote program stdout/stderr and nonzero-exit semantics are unchanged.
+- Typed and raw Cloud API routes retain target/action and known caller deadline
+  budgets. The SDK does not expose HTTP status/headers at this error boundary:
+  those fields are omitted, while original SDK Code/Message/RequestId survive.
+- Real loopback TLS HTTP and WebSocket rejections exercise the shared instance/
+  deployment proxy. Logs contain observed status and allowlisted request ID,
+  never response bodies, arbitrary headers, credentials or URL queries. HTTP
+  rejection bodies are still forwarded as business responses.
+- Text failures display available metadata; schema and explain describe the
+  optional fields. stable and preview share these implementations.
+
+Validation is local fault injection, not a credentialed cloud/mobile/Windows
+runtime verification. No DNS/TCP/TLS tracing, automatic retries, or private SDK
+transport replacement is introduced.
+
+Regression check: a Go overlay that disables boundary propagation and restores
+stage-2 proxy/download implementations makes the new local-file, process-start,
+cloud-context, HTTP/WS rejection, NDJSON connection and failed-download tests
+fail on their missing metadata or swallowed failure assertions.
+
+Additional inventory: the unused OpenBrowser utility has no command caller;
+process-identity `ps` fallback returns a boolean and intentionally keeps its
+existing cleanup policy; registryHTTP belongs to patch-test fixture setup, not
+the shipped command request path. These helpers do not emit CLI failures and
+are not converted into new failure envelopes by this change.

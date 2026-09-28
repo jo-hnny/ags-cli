@@ -358,7 +358,7 @@ func resolveCodeInput(stdin io.Reader, codeFlag string, files []string) (string,
 	if stdin != nil {
 		data, err := io.ReadAll(stdin)
 		if err != nil {
-			return "", fmt.Errorf("failed to read from stdin: %w", err)
+			return "", output.WithContext(fmt.Errorf("failed to read from stdin: %w", err), map[string]any{"Stage": "request_input", "Field": "code", "Path": "stdin"})
 		}
 		return string(data), nil
 	}

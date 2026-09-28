@@ -102,7 +102,7 @@ func explainCodeData(code string) (ExplainData, bool) {
 	case "INTERNAL_ERROR":
 		base.Kind = output.KindGenericError
 		base.ExitCode = output.ExitGenericError
-		base.Meaning = "The CLI could not classify the error. The original cause is available in --debug stderr diagnostics."
+		base.Meaning = "The CLI could not classify the error. Optional Stage, Operation, Program, Path, Field or Endpoint details identify the observed boundary. The original cause is available in --debug stderr diagnostics; config parse errors retain safe locations instead of quoting unloaded credentials."
 		base.AffectedCommands = allCommandNames()
 		base.Fix = []string{"agr doctor", "Rerun with --debug to inspect the redacted error chain on stderr."}
 	case "NETWORK_ERROR", "DNS_ERROR":

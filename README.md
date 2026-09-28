@@ -530,6 +530,19 @@ retained. These observations apply to startup/recovery probes and runtime
 connection failures; startup failures also preserve them across background
 readiness. Token acquisition remains a separate error boundary.
 
+Other boundaries add optional `Stage` and `Operation`, plus `Program`, `Path`,
+`Field` or `InstanceId` where relevant. Text failures display available boundary
+metadata; JSON/NDJSON retain it in `Failure.Details`. File errors retain their OS
+cause. Configuration parse/decode failures report the file and parser location
+when available, without quoting values from a config that has not loaded.
+Remote connection setup uses `remote_connect`; SDK execution failures use
+`remote_execute`, which does not prove whether the remote program started.
+PTY reports `remote_start` before its start event and `remote_stream` afterwards.
+Cloud SDK errors preserve Code/Message/RequestId and add the target/action and any
+known caller budget; unavailable HTTP status/headers are omitted. Proxy HTTP/WS
+failures log observed response status and allowlisted IDs to redacted, bounded
+stderr diagnostics while preserving the proxied response and stream protocol.
+
 Remote programs returning nonzero exit codes keep their existing output and
 exit-code semantics. Diagnostic availability does not make retries safe to replay.
 

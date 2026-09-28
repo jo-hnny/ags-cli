@@ -2,6 +2,7 @@ package exec
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"os"
@@ -44,6 +45,42 @@ func TestNDJSONConnectionFailureRetainsCause(t *testing.T) {
 		var event output.NDJSONEvent
 		if json.Unmarshal(line, &event) != nil || event.Type != []string{"started", "failed"}[i] {
 			t.Fatalf("event=%s", line)
+		}
+	}
+}
+
+type failingExecDataPlane struct {
+	fakeExecDataPlane
+	cause error
+}
+
+func (f *failingExecDataPlane) Exec(context.Context, string, []string) (string, string, int, any, error) {
+	return "remote stdout", "remote stderr", 17, nil, f.cause
+}
+func TestExecutionErrorVersusRemoteExit(t *testing.T) {
+	setupConfig(t)
+	for _, cause := range []error{context.DeadlineExceeded, nil} {
+		dp := &failingExecDataPlane{cause: cause}
+		restore := cli.SetTestDataPlaneForTest(dp)
+		runtime, err := Module().Build(command.Deps{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		result, err := runtime.Handler.Run(t.Context(), command.Request{Args: []string{"ins-test", "true"}, DashPos: 1})
+		restore()
+		if cause != nil {
+			got := cli.ClassifyCLIError(err)
+			if got == nil || !errors.Is(got, cause) || got.Failure.Code != "TIMEOUT" || got.Failure.Details["Stage"] != "remote_execute" || got.Failure.Details["Operation"] != "exec" {
+				t.Fatalf("execution context lost: %#v, %v", got, err)
+			}
+		} else {
+			if err != nil || result == nil || result.ExitCode != 17 {
+				t.Fatalf("business exit changed: %#v %v", result, err)
+			}
+			data := result.Data.(*output.ExecData)
+			if data.Stdout != "remote stdout" || data.Stderr != "remote stderr" || data.ExitCode != 17 {
+				t.Fatalf("business data changed: %#v", data)
+			}
 		}
 	}
 }

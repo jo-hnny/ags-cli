@@ -482,6 +482,16 @@ mobile WebSocket 握手诊断包含 `Endpoint`（不含用户信息、query 和 
 最多 256 字节，不保留其他响应头和响应正文。启动探测、恢复探测和运行期连接失败
 均记录这些观察结果；启动失败还会跨后台就绪协议保留它们。token 获取失败保持独立分类。
 
+其他边界按需补充 `Stage`、`Operation`，以及 `Program`、`Path`、`Field` 或
+`InstanceId`。普通文本错误显示可用的边界信息；JSON/NDJSON 放在 `Failure.Details`。
+文件错误保留底层 OS cause；配置解析或类型转换失败显示路径及可用的行列位置，
+不引用尚未成功加载的配置值。连接准备失败使用 `remote_connect`；SDK 执行调用失败
+使用 `remote_execute`，不据此推断远端程序是否已启动。PTY 在收到启动事件前使用
+`remote_start`，之后使用 `remote_stream`。
+云 SDK 保留 Code/Message/RequestId，并补目标、操作及已知调用预算；SDK 未提供的
+HTTP 状态和响应头不填猜测值。代理 HTTP/WS 失败在脱敏、限长的 stderr 日志中记录
+实际状态和白名单请求 ID，转发响应及流式协议保持不变。
+
 远端程序正常返回非零退出码时，保留已有输出和退出码语义。诊断增强不代表业务操作可安全重试。
 
 ```bash
