@@ -495,7 +495,7 @@ known credential values and explicit credential/header fields are still redacted
 Bare Cookie values are hidden only at a header line start or in a quoted object
 field, so prose such as `failed to set cookie: permission denied` stays readable.
 
-For foreground mobile tunnel failures, token acquisition retains cloud API
+For mobile tunnel failures, token acquisition retains cloud API
 classification and RequestId; timeouts and cancellations retain their own kinds.
 Handshake HTTP 401/403 uses `TUNNEL_AUTH_FAILED` (exit 4). A local port already
 in use returns `PORT_IN_USE` (exit 2); choose another port or `--port 0`. Other
@@ -503,8 +503,20 @@ unclassified tunnel operations use `TUNNEL_ERROR` and retain the observed reason
 Other WebSocket handshake failures use `NETWORK_ERROR` (exit 1), with optional
 `Failure.Details.Stage=websocket_handshake` and `HTTPStatus` when observed. These
 fields are described by `agr schema -o json` under `Data.FailureDetails` and by
-`agr explain NETWORK_ERROR`. Background `mobile connect` diagnostic forwarding
-is a separate follow-up; it does not yet preserve these details across processes.
+`agr explain NETWORK_ERROR`. Background `mobile connect` preserves the child's
+structured failure and exit code, including handshake status and cloud RequestId.
+When no valid child failure is available, it reports `TUNNEL_START_FAILED`,
+`TUNNEL_EXITED`, `TUNNEL_PROTOCOL_ERROR`, or `TUNNEL_READY_TIMEOUT` according to
+the observed startup stage. Cancellation and context deadlines retain their own
+classification; failed startup terminates and reaps the child with bounded waits.
+
+If a tunnel log was created, failures include `Failure.Details.LogPath` (also
+shown in text output). `--debug` is forwarded to the child and adds a separate
+`tunnel log tail:` section to parent stderr: at most 40 lines from the last
+64 KiB, capped to the last 8 KiB plus a truncation marker. Tunnel log records
+are redacted and bounded before being written to disk; the tail is redacted
+again before display. A log creation failure does not change the underlying
+failure classification and does not return a nonexistent log path.
 
 Remote programs returning nonzero exit codes keep their existing output and
 exit-code semantics. Diagnostic availability does not make retries safe to replay.

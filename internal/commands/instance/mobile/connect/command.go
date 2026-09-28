@@ -1,15 +1,11 @@
 package connect
 
 import (
-	"bufio"
 	"context"
-	"encoding/json"
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
-	"time"
 
 	"github.com/TencentCloudAgentRuntime/ags-cli/internal/cli"
 	"github.com/TencentCloudAgentRuntime/ags-cli/internal/command"
@@ -45,13 +41,6 @@ type RuntimeDeps struct {
 	DisconnectADB  func(adbPath, addr string) error
 	StartTunnel    func(ctx context.Context, instanceID string, port int) (TunnelReady, error)
 	ConnectADB     func(adbPath, addr string, maxRetries int, out io.Writer) error
-}
-
-type readyMessage struct {
-	Status  string `json:"status"`
-	Port    int    `json:"port,omitempty"`
-	PID     int    `json:"pid,omitempty"`
-	Message string `json:"message,omitempty"`
 }
 
 // Module returns this package's command module.
@@ -204,92 +193,6 @@ func runConnect(ctx context.Context, req command.Request, deps command.Deps, rt 
 	}}, nil
 }
 
-func startTunnelDaemon(_ context.Context, instanceID string, port int) (TunnelReady, error) {
-	selfPath, err := os.Executable()
-	if err != nil {
-		return TunnelReady{}, fmt.Errorf("failed to get executable path: %w", err)
-	}
-
-	tunnelArgs := []string{"instance", "mobile", "tunnel", instanceID, "--daemon", fmt.Sprintf("--port=%d", port)}
-	if cli.CfgFile() != "" {
-		tunnelArgs = append(tunnelArgs, "--config", cli.CfgFile())
-	}
-	if cli.RegionFlag() != "" {
-		tunnelArgs = append(tunnelArgs, "--region", cli.RegionFlag())
-	}
-	if cli.DomainFlag() != "" {
-		tunnelArgs = append(tunnelArgs, "--domain", cli.DomainFlag())
-	}
-
-	cmd := exec.Command(selfPath, tunnelArgs...)
-	logPath, logFile := openTunnelLog(instanceID)
-	if logFile != nil {
-		cmd.Stderr = logFile
-	}
-	cmd.Env = tunnelEnv()
-
-	stdout, err := cmd.StdoutPipe()
-	if err != nil {
-		_ = closeIfOpen(logFile)
-		return TunnelReady{}, fmt.Errorf("failed to create stdout pipe: %w", err)
-	}
-	if err := cmd.Start(); err != nil {
-		_ = closeIfOpen(logFile)
-		return TunnelReady{}, fmt.Errorf("failed to start tunnel process: %w", err)
-	}
-
-	go func() {
-		_ = cmd.Wait()
-		_ = closeIfOpen(logFile)
-	}()
-
-	ready, err := readTunnelReady(stdout)
-	if err != nil {
-		_ = cmd.Process.Kill()
-		return TunnelReady{}, err
-	}
-	if ready.Status != "ready" || ready.Port == 0 {
-		_ = cmd.Process.Kill()
-		return TunnelReady{}, fmt.Errorf("tunnel reported error: %s", ready.Message)
-	}
-	return TunnelReady{Port: ready.Port, PID: ready.PID, ExePath: selfPath, LogPath: logPath}, nil
-}
-
-func readTunnelReady(stdout io.Reader) (readyMessage, error) {
-	readyCh := make(chan readyMessage, 1)
-	errCh := make(chan error, 1)
-
-	go func() {
-		scanner := bufio.NewScanner(stdout)
-		if scanner.Scan() {
-			var msg readyMessage
-			if err := json.Unmarshal(scanner.Bytes(), &msg); err != nil {
-				errCh <- fmt.Errorf("failed to parse tunnel ready message: %w", err)
-				return
-			}
-			readyCh <- msg
-			return
-		}
-		if err := scanner.Err(); err != nil {
-			errCh <- fmt.Errorf("failed to read tunnel output: %w", err)
-		} else {
-			errCh <- fmt.Errorf("tunnel process exited without ready message")
-		}
-	}()
-
-	timer := time.NewTimer(30 * time.Second)
-	defer timer.Stop()
-
-	select {
-	case ready := <-readyCh:
-		return ready, nil
-	case err := <-errCh:
-		return readyMessage{}, err
-	case <-timer.C:
-		return readyMessage{}, fmt.Errorf("tunnel did not become ready within 30s")
-	}
-}
-
 func openTunnelLog(instanceID string) (string, *os.File) {
 	homeDir, err := os.UserHomeDir()
 	if err != nil {
@@ -319,6 +222,9 @@ func tunnelEnv() []string {
 		env = append(env, "TENCENTCLOUD_SECRET_KEY="+cli.SecretKeyFlag())
 	} else if cfg.Auth.SecretKey != "" {
 		env = append(env, "TENCENTCLOUD_SECRET_KEY="+cfg.Auth.SecretKey)
+	}
+	if token := config.GetToken(); token != "" {
+		env = append(env, "TENCENTCLOUD_TOKEN="+token)
 	}
 	return env
 }

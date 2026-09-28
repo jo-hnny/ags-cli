@@ -123,8 +123,11 @@ func schemaFn(cmd *cobra.Command, args []string) (*CmdResult, error) {
 	data := map[string]any{
 		"Commands": catalog.Ordered, "ExitCodes": exitCodeTable(),
 		"FailureDetails": map[string]any{
-			"Stage":      map[string]string{"Type": "string", "Description": "Optional observed failure stage; websocket_handshake for a foreground mobile tunnel handshake failure."},
-			"HTTPStatus": map[string]string{"Type": "integer", "Description": "Optional HTTP status observed during a failed foreground mobile tunnel WebSocket handshake. HTTP 401/403 uses TUNNEL_AUTH_FAILED; other unclassified handshake failures use NETWORK_ERROR. Omitted when no response was received."},
+			"LogPath":    map[string]string{"Type": "string", "Description": "Tunnel log path on startup failure, only when the log file was successfully created."},
+			"TimeoutMs":  map[string]string{"Type": "integer", "Description": "Observed tunnel readiness wait budget in milliseconds when that budget expires."},
+			"ExitCode":   map[string]string{"Type": "integer", "Description": "Observed child process exit code when it exits without a readiness message."},
+			"Stage":      map[string]string{"Type": "string", "Description": "Optional observed failure stage: websocket_handshake, start, exit, readiness_protocol, or readiness_wait for mobile tunnel failures."},
+			"HTTPStatus": map[string]string{"Type": "integer", "Description": "Optional HTTP status observed during a failed mobile tunnel WebSocket handshake, preserved across background readiness. HTTP 401/403 uses TUNNEL_AUTH_FAILED; other unclassified handshake failures use NETWORK_ERROR. Omitted when no response was received."},
 		},
 	}
 	return OK(data, func(w io.Writer) {
@@ -1151,7 +1154,7 @@ func buildHandwrittenSchemas() []CommandSchema {
 			RequiresAuth: true, SupportsJson: true, SupportsNdjson: false, SupportsJq: true,
 			SupportsRequest: false,
 			Args:            []ArgSchema{{Name: "InstanceId", Type: "string", Required: true}},
-			Failures:        []string{"ADB_NOT_FOUND"},
+			Failures:        []string{"ADB_NOT_FOUND", "TUNNEL_START_FAILED", "TUNNEL_EXITED", "TUNNEL_PROTOCOL_ERROR", "TUNNEL_READY_TIMEOUT", "TUNNEL_AUTH_FAILED", "PORT_IN_USE", "TUNNEL_ERROR"},
 		},
 		{
 			Name: "instance.mobile.disconnect", Summary: "Disconnect from mobile sandbox",
