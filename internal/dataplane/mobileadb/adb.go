@@ -4,7 +4,9 @@ package mobileadb
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
+	"github.com/TencentCloudAgentRuntime/ags-cli/internal/output"
 	"io"
 	"os"
 	"os/exec"
@@ -40,7 +42,7 @@ func Require() (string, error) {
 
 	path, err := exec.LookPath("adb")
 	if err != nil {
-		return "", fmt.Errorf("adb not found in PATH; install Android SDK Platform-Tools or set ADB_PATH")
+		return "", processError("adb", fmt.Errorf("adb not found in PATH; install Android SDK Platform-Tools or set ADB_PATH: %w", err))
 	}
 	return path, nil
 }
@@ -51,7 +53,7 @@ func Run(adbPath string, args ...string) error {
 	cmd := exec.Command(adbPath, args...)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
-	return cmd.Run()
+	return processError(adbPath, cmd.Run())
 }
 
 // RunStreaming executes adb with caller-provided streams and returns adb's exit
@@ -65,7 +67,7 @@ func RunStreaming(adbPath string, args []string, stdin io.Reader, stdout, stderr
 		if exitErr, ok := err.(*exec.ExitError); ok {
 			return exitErr.ExitCode(), nil
 		}
-		return 0, err
+		return 0, processError(adbPath, err)
 	}
 	return 0, nil
 }
@@ -81,7 +83,7 @@ func RunBuffered(adbPath string, args ...string) (stdout string, stderr string, 
 		if exitErr, ok := runErr.(*exec.ExitError); ok {
 			return stdoutBuf.String(), stderrBuf.String(), exitErr.ExitCode(), nil
 		}
-		return "", "", 0, runErr
+		return "", "", 0, processError(adbPath, runErr)
 	}
 	return stdoutBuf.String(), stderrBuf.String(), 0, nil
 }
@@ -97,7 +99,7 @@ func ConnectWithRetry(adbPath, addr string, maxRetries int, out io.Writer) error
 		}
 		raw, err := exec.Command(adbPath, "connect", addr).CombinedOutput()
 		if err != nil {
-			lastErr = err
+			lastErr = processError(adbPath, err)
 			continue
 		}
 		outStr := strings.TrimSpace(string(raw))
@@ -109,4 +111,17 @@ func ConnectWithRetry(adbPath, addr string, maxRetries int, out io.Writer) error
 		lastErr = fmt.Errorf("adb connect: %s", outStr)
 	}
 	return fmt.Errorf("adb connect failed after %d attempts: %w", maxRetries, lastErr)
+}
+
+func processError(program string, err error) error {
+	if err == nil {
+		return nil
+	}
+	details := map[string]any{"Program": program, "Stage": "subprocess_start"}
+	var exit *exec.ExitError
+	if errors.As(err, &exit) {
+		details["Stage"] = "subprocess_exit"
+		details["ExitCode"] = exit.ExitCode()
+	}
+	return output.WithContext(err, details)
 }
