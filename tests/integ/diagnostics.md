@@ -1,4 +1,4 @@
-# Error diagnostics coverage (Issue #138, step 1)
+# Error diagnostics coverage (Issue #138, steps 1 and 2)
 
 The root `renderExecuteError` is the only error-chain printer. It prints before
 checking the already-written-output marker. The marker carries a cause but never
@@ -62,7 +62,7 @@ Business stderr is still forwarded immediately and unchanged.
 | Successful file download, proxy, mobile tunnel and stream completion | No local failure to diagnose; no error-chain output. Startup/transfer errors still return through the common exit. |
 | Standalone `cmdtree` builder | Propagates `Result.Cause` in its exit error. Production registry installation replaces its RunE with the wrappers above. |
 | Cobra help/argument rejection before a handler | Error returns reach the root. The two direct help-output incompatibility exits have only static usage text, not an underlying error chain. |
-| Background mobile tunnel readiness | String-only protocol and child-log forwarding remain step 2. Step 1 cannot recover types already discarded across this process boundary. |
+| Background mobile tunnel readiness | Shared readiness messages preserve child Failure and exit code. Parent startup, protocol, exit and wait failures have separate codes/stages. Debug forwards a separately labeled, redacted, bounded log tail; only created logs contribute LogPath. |
 
 ## `errors.Is` / `errors.As` audit
 
@@ -97,5 +97,18 @@ new CLI wrappers on their existing paths.
   and seeded random chunking) produces the same file as one write, including
   self-overlapping values, values overlapping each other, and output ending
   inside a value.
+- Real parent/child subprocesses run the production connect and tunnel handlers
+  against a loopback WebSocket handshake rejection. They verify HTTP 403, custom
+  child classification/exit code, text/JSON framing, debug forwarding, credential
+  environment forwarding and redaction in the entire persisted log as well as
+  the displayed tail.
+- Process fixtures exercise start failure, early exit, no readiness message,
+  malformed/invalid messages, readiness timeout, cancellation, context deadline,
+  unavailable log files and success. Failure paths assert the child was reaped.
+- Log-tail tests cover a partial first line, bounded UTF-8 output and retention
+  of the latest cause; writer tests check redaction before persistence.
+- Replacing only the child tunnel handler with the step-1 implementation via a
+  Go overlay makes the handshake subprocess regression fail with debug both on
+  and off: the old string-only message loses the expected auth failure/exit 4.
 
 No credentialed live cloud or real mobile-device verification is claimed here.

@@ -190,6 +190,7 @@ func debugError(err error) {
 	if done, ok := err.(*envelopeAlreadyWritten); ok {
 		err = done.cause
 	}
+	defer debugTunnelLog(err)
 	var nodes []error
 	remaining := 32
 	var visit func(error)

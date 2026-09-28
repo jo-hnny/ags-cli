@@ -475,14 +475,23 @@ URL 只替换密码和敏感 query 值；其他参数转义损坏时也不整段
 Details 中以凭据或请求头命名的字段（如 `Authorization`、`Cookie`、`SecretKey`）会被替换；
 通用的 token/signature/sig 字段不仅凭名字隐藏。
 
-前台 mobile tunnel 获取 token 失败时保留云 API 分类和 RequestId；超时、取消保留各自分类。
+mobile tunnel 获取 token 失败时保留云 API 分类和 RequestId；超时、取消保留各自分类。
 握手 HTTP 401/403 返回 `TUNNEL_AUTH_FAILED`（退出码 4）。本地端口占用返回
 `PORT_IN_USE`（退出码 2），可换端口或使用 `--port 0`；其他未分类 tunnel 操作
 返回 `TUNNEL_ERROR` 并保留已观察到的原因。
 其他 WebSocket 握手失败使用 `NETWORK_ERROR`（退出码 1），并按实际观察附带
 `Failure.Details.Stage=websocket_handshake` 和 `HTTPStatus`，没有 HTTP 响应则省略状态码。
 字段说明见 `agr schema -o json` 的 `Data.FailureDetails` 和 `agr explain NETWORK_ERROR`。
-后台 `mobile connect` 的诊断转发属于后续步骤，目前尚未跨进程保留这些信息。
+后台 `mobile connect` 保留子进程的结构化 Failure 和退出码，包括握手状态码和云 API RequestId。
+没有有效子进程 Failure 时，按实际观察到的阶段返回 `TUNNEL_START_FAILED`、
+`TUNNEL_EXITED`、`TUNNEL_PROTOCOL_ERROR` 或 `TUNNEL_READY_TIMEOUT`。
+取消和 context deadline 保留各自分类；启动失败后会终止并回收子进程，清理等待有时间上限。
+
+仅在成功创建日志文件时，失败结果才包含 `Failure.Details.LogPath`，文本输出也会显示该路径。
+`--debug` 会转发给子进程，并在父进程 stderr 中单独显示 `tunnel log tail:`：
+从文件末尾 64 KiB 中取最多 40 行，再限制为末尾 8 KiB 加截断标记。
+tunnel 日志记录在落盘前就会脱敏和限长，尾部日志显示前会再次脱敏。
+日志文件创建失败不改变原始错误分类，也不会返回不存在的日志路径。
 
 远端程序正常返回非零退出码时，保留已有输出和退出码语义。诊断增强不代表业务操作可安全重试。
 

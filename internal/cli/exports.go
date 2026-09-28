@@ -72,6 +72,9 @@ func NonInteractive() bool { return nonInteractive }
 // IsJSONOutput reports whether the resolved output format is JSON or NDJSON.
 func IsJSONOutput() bool { return isJSON() || isNDJSON() }
 
+// DebugEnabled reports whether diagnostic output was requested.
+func DebugEnabled() bool { return debugFlag }
+
 // NoColor reports whether ANSI color/escape output is disabled.
 func NoColor() bool { return noColor }
 

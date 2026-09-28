@@ -82,7 +82,7 @@ func TestRunTunnelDaemonWritesReadyMessage(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Run returned error: %v", err)
 	}
-	var msg readyMessage
+	var msg adbtunnel.ReadyMessage
 	if err := json.Unmarshal(bytes.TrimSpace(out.Bytes()), &msg); err != nil {
 		t.Fatalf("ready json=%q err=%v", out.String(), err)
 	}
