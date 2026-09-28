@@ -173,11 +173,21 @@ are not converted into new failure envelopes by this change.
 ## Reviewer regression guards
 
 Typed Cloud API wrappers use the generic `client.CallCloud` helper to capture
-context before invocation and preserve classification. AST tests scan both wrapper
-files, including anonymous functions, reject SDK calls/method references outside
-the helper and require the Action to match its SDK method. In-memory mutations
+context before invocation and preserve classification. AST tests recursively scan
+repository Go production sources, including anonymous functions and files excluded
+by platform/channel build tags. They reject SDK Action calls/method references
+outside the helper and require the Action to match its SDK method. Action names
+are derived from the installed SDK, including context-free variants, rather than
+from a maintained list or a general `WithContext` suffix. This is a conservative
+name-based guard, not full Go type analysis; unrelated methods with the exact same
+Action name can still fail loudly. Locally declared receiver function fields are
+recognized as injection hooks. Test files, the `tests/` harness, testdata, hidden
+directories and vendor dependencies are excluded. In-memory mutations
 remove a real helper invocation in each file; negative fixtures cover new direct
-calls, context-free calls, method aliases and mismatched Actions.
+calls, context-free calls, method aliases and mismatched Actions. A new third file
+in a new command directory is injected into a filesystem fixture to prove that
+file discovery catches direct calls and aliases even without an SDK import or an
+active build tag.
 
 HTTP proxy business responses (4xx) use `[HTTP]` only in verbose mode; 5xx always
 use `[ERROR]`. Both retain
