@@ -213,9 +213,16 @@ func (t *Tunnel) Probe() error {
 	probeCtx, probeCancel := context.WithTimeout(t.ctx, probeTimeout)
 	defer probeCancel()
 
-	wsConn, _, err := dialer.DialContext(probeCtx, t.wsURL, headers)
+	wsConn, response, err := dialer.DialContext(probeCtx, t.wsURL, headers)
 	if err != nil {
-		return fmt.Errorf("upstream WS handshake failed: %w", err)
+		if probeCtx.Err() != nil {
+			err = errors.Join(err, probeCtx.Err())
+		}
+		failure := &HandshakeError{Cause: err}
+		if response != nil {
+			failure.HTTPStatus = response.StatusCode
+		}
+		return failure
 	}
 
 	// Send a clean close and disconnect immediately
@@ -228,6 +235,22 @@ func (t *Tunnel) Probe() error {
 
 	return nil
 }
+
+// HandshakeError records only observations available at the WebSocket boundary.
+// It never retains response bodies or authentication headers.
+type HandshakeError struct {
+	Cause      error
+	HTTPStatus int
+}
+
+func (e *HandshakeError) Error() string {
+	if e.HTTPStatus != 0 {
+		return fmt.Sprintf("upstream WS handshake failed (HTTP %d): %v", e.HTTPStatus, e.Cause)
+	}
+	return fmt.Sprintf("upstream WS handshake failed: %v", e.Cause)
+}
+
+func (e *HandshakeError) Unwrap() error { return e.Cause }
 
 func (t *Tunnel) newDialer() *websocket.Dialer {
 	dialer := &websocket.Dialer{

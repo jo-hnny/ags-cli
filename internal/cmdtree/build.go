@@ -240,7 +240,7 @@ func BuildModuleCommand(module command.Module, deps command.Deps) (*cobra.Comman
 				return nil
 			}
 			if result.StreamDone {
-				return exitError(result.ExitCode)
+				return exitError(result.ExitCode, result.Cause)
 			}
 			if runtime.Renderer != nil {
 				if err := runtime.Renderer.Render(cmd.Context(), result); err != nil {
@@ -254,9 +254,9 @@ func BuildModuleCommand(module command.Module, deps command.Deps) (*cobra.Comman
 				if code == 0 {
 					code = output.ExitCodeForKind(result.Failure.Kind)
 				}
-				return &output.CLIError{Failure: result.Failure, ExitCode: code}
+				return &output.CLIError{Failure: result.Failure, ExitCode: code, Cause: result.Cause}
 			}
-			return exitError(result.ExitCode)
+			return exitError(result.ExitCode, result.Cause)
 		},
 	}
 	if spec.PreserveFlagOrder {
@@ -699,13 +699,14 @@ func defaultRender(deps command.Deps, result *command.Result) error {
 	return nil
 }
 
-func exitError(code int) error {
+func exitError(code int, cause error) error {
 	if code == 0 {
 		return nil
 	}
 	return &output.CLIError{
 		Failure:  &output.Failure{Code: "COMMAND_FAILED", Kind: output.KindGenericError, Message: "command failed"},
 		ExitCode: code,
+		Cause:    cause,
 	}
 }
 

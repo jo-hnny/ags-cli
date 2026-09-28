@@ -3,12 +3,50 @@ package client
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net"
 	"testing"
 
 	"github.com/TencentCloudAgentRuntime/ags-cli/internal/output"
 	sdkerrors "github.com/tencentcloud/tencentcloud-sdk-go/tencentcloud/common/errors"
 )
+
+func TestWrappedCLIErrorTakesPriorityOverSDKCause(t *testing.T) {
+	cause := sdkerrors.NewTencentCloudSDKError("AuthFailure.Test", "SDK message", "req-sdk")
+	original := output.NewConflictError("CUSTOM", "public message", "hint").WithCause(cause)
+	original.Failure.Details = map[string]any{"RequestId": "req-custom"}
+	original.ExitCode = 7
+	wrapped := fmt.Errorf("operation context: %w", original)
+	got := ClassifyError(wrapped)
+	if got.Failure.Code != "CUSTOM" || got.Failure.Kind != output.KindConflict || got.ExitCode != 7 || got.Failure.Details["RequestId"] != "req-custom" {
+		t.Fatalf("classification overwritten: %#v", got)
+	}
+	if !errors.Is(got, cause) || errors.Unwrap(got) != wrapped {
+		t.Fatal("outer context or SDK cause lost")
+	}
+	cloud := ClassifyCloudError(wrapped).(*output.CLIError)
+	if cloud.Failure.Code != "CUSTOM" || cloud.ExitCode != 7 || !errors.Is(cloud, cause) {
+		t.Fatalf("direct cloud classifier overwrote classification: %#v", cloud)
+	}
+}
+
+func TestWrappedCloudErrorRetainsCauseAndRequestID(t *testing.T) {
+	for _, requestID := range []string{"", "req-test"} {
+		cause := sdkerrors.NewTencentCloudSDKError("AuthFailure.Test", "SDK message", requestID)
+		wrapped := fmt.Errorf("acquiring token: %w", cause)
+		got := ClassifyError(wrapped)
+		if got.Failure.Code != "AuthFailure.Test" || got.Failure.Message != "SDK message" || !errors.Is(got, cause) {
+			t.Fatalf("SDK error lost: %#v", got)
+		}
+		if requestID == "" {
+			if _, present := got.Failure.Details["RequestId"]; present {
+				t.Fatal("invented RequestId")
+			}
+		} else if got.Failure.Details["RequestId"] != requestID {
+			t.Fatal("RequestId lost")
+		}
+	}
+}
 
 func TestClassifyErrorNil(t *testing.T) {
 	result := ClassifyError(nil)

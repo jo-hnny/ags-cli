@@ -12,14 +12,23 @@ import (
 // ClassifyCloudError wraps a TencentCloud SDK error into a CLIError with
 // the correct kind/exit code based on the SDK error code. This eliminates
 // string matching in the generic ClassifyError.
-func ClassifyCloudError(err error) error {
+func ClassifyCloudError(err error) (result error) {
 	if err == nil {
 		return nil
+	}
+	var cliErr *output.CLIError
+	if errors.As(err, &cliErr) {
+		return cliErr.WithCause(err)
 	}
 	var sdkErr *sdkerrors.TencentCloudSDKError
 	if !errors.As(err, &sdkErr) {
 		return err
 	}
+	defer func() {
+		if classified, ok := result.(*output.CLIError); ok {
+			result = classified.WithCause(err)
+		}
+	}()
 
 	code := sdkErr.GetCode()
 	msg := sdkErr.GetMessage()

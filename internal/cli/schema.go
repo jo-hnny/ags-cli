@@ -120,7 +120,13 @@ func schemaFn(cmd *cobra.Command, args []string) (*CmdResult, error) {
 		return nil, fmt.Errorf("unknown command: %s", args[0])
 	}
 
-	data := map[string]any{"Commands": catalog.Ordered, "ExitCodes": exitCodeTable()}
+	data := map[string]any{
+		"Commands": catalog.Ordered, "ExitCodes": exitCodeTable(),
+		"FailureDetails": map[string]any{
+			"Stage":      map[string]string{"Type": "string", "Description": "Optional observed failure stage; websocket_handshake for a foreground mobile tunnel handshake failure."},
+			"HTTPStatus": map[string]string{"Type": "integer", "Description": "Optional HTTP status observed during a failed foreground mobile tunnel WebSocket handshake. Omitted when no response was received."},
+		},
+	}
 	return OK(data, func(w io.Writer) {
 		fmt.Fprintf(w, "%-35s %s\n", "COMMAND", "SUMMARY")
 		for _, s := range catalog.Ordered {
@@ -1109,6 +1115,7 @@ func buildHandwrittenSchemas() []CommandSchema {
 			RequiresAuth: true, SupportsJson: false, SupportsNdjson: false, SupportsJq: false,
 			SupportsRequest: false,
 			Args:            []ArgSchema{{Name: "InstanceId", Type: "string", Required: true}},
+			Failures:        []string{"TTY_REQUIRED"},
 		},
 		{
 			Name: "instance.browser.vnc", Summary: "Show VNC URL for browser sandbox",

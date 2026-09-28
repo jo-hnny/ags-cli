@@ -446,6 +446,19 @@ agr instance exec "$id" --stream -o ndjson -- tail -f app.log
 
 ## 故障排查
 
+`--debug` 会将限长、脱敏后的错误链写到 stderr。JSON stdout 仍是单个 envelope，
+NDJSON 流仍只输出一次终止事件；未知错误在普通模式下仍显示 `INTERNAL_ERROR`。
+诊断写出前会处理当前生效的 SecretId/SecretKey/Token、Authorization/Cookie 请求头、
+URL 签名参数及 URL 密码，不生成堆栈转储或上传日志。
+
+前台 mobile tunnel 获取 token 失败时保留云 API 分类和 RequestId；超时、取消保留各自分类。
+其他 WebSocket 握手失败使用 `NETWORK_ERROR`（退出码 1），并按实际观察附带
+`Failure.Details.Stage=websocket_handshake` 和 `HTTPStatus`，没有 HTTP 响应则省略状态码。
+字段说明见 `agr schema -o json` 的 `Data.FailureDetails` 和 `agr explain NETWORK_ERROR`。
+后台 `mobile connect` 的诊断转发属于后续步骤，目前尚未跨进程保留这些信息。
+
+远端程序正常返回非零退出码时，保留已有输出和退出码语义。诊断增强不代表业务操作可安全重试。
+
 ```bash
 agr status
 agr doctor

@@ -65,6 +65,7 @@ type CmdResult struct {
 	Failure    *output.Failure
 	RenderText func(w io.Writer) // receives ios.Out from Wrap
 	Handled    bool
+	Cause      error
 	// MetaExtra is merged into the envelope Meta object. It carries
 	// command-specific metadata that should ride alongside Backend /
 	// DurationMs / Effects, e.g. raw API call metadata
@@ -107,7 +108,7 @@ func FromCommandResult(result *command.Result) *CmdResult {
 		return nil
 	}
 	if result.StreamDone {
-		return &CmdResult{Handled: true, ExitCode: result.ExitCode}
+		return &CmdResult{Handled: true, ExitCode: result.ExitCode, Cause: result.Cause}
 	}
 	return &CmdResult{
 		Data:       result.Data,
@@ -117,6 +118,7 @@ func FromCommandResult(result *command.Result) *CmdResult {
 		Failure:    result.Failure,
 		RenderText: result.Text,
 		MetaExtra:  result.MetaExtra,
+		Cause:      result.Cause,
 	}
 }
 
@@ -142,7 +144,7 @@ func Wrap(commandID string, fn CmdFunc) func(*cobra.Command, []string) error {
 				if jqErr := writeEnvelope(ios.Out, commandID, "failed", nil, cliErr.Failure, nil, nil, dm, nil); jqErr != nil {
 					return output.NewUsageError("INVALID_JQ_EXPRESSION", jqErr.Error(), "Check your --jq expression syntax.")
 				}
-				return &envelopeAlreadyWritten{code: cliErr.ExitCode}
+				return &envelopeAlreadyWritten{code: cliErr.ExitCode, cause: err}
 			}
 			return cliErr
 		}
@@ -153,13 +155,14 @@ func Wrap(commandID string, fn CmdFunc) func(*cobra.Command, []string) error {
 
 		if result.Handled {
 			if result.ExitCode != 0 {
-				return &envelopeAlreadyWritten{code: result.ExitCode}
+				return &envelopeAlreadyWritten{code: result.ExitCode, cause: result.Cause}
 			}
 			return nil
 		}
 
 		// Ensure Fix field is populated for result-path failures too.
 		if result.Failure != nil {
+			result.Failure = sanitizeFailure(result.Failure)
 			client.AttachFix(result.Failure)
 		}
 
@@ -178,7 +181,7 @@ func Wrap(commandID string, fn CmdFunc) func(*cobra.Command, []string) error {
 				return output.NewUsageError("INVALID_JQ_EXPRESSION", jqErr.Error(), "Check your --jq expression syntax.")
 			}
 			if result.ExitCode != 0 {
-				return &envelopeAlreadyWritten{code: result.ExitCode}
+				return &envelopeAlreadyWritten{code: result.ExitCode, cause: resultDiagnosticCause(result)}
 			}
 			return nil
 		}
@@ -188,7 +191,7 @@ func Wrap(commandID string, fn CmdFunc) func(*cobra.Command, []string) error {
 		}
 		if result.ExitCode != 0 {
 			if result.Failure == nil {
-				return &envelopeAlreadyWritten{code: result.ExitCode}
+				return &envelopeAlreadyWritten{code: result.ExitCode, cause: result.Cause}
 			}
 			return resultFailureError(result)
 		}
@@ -210,14 +213,29 @@ func WrapNoJSON(fn func(*cobra.Command, []string) error) func(*cobra.Command, []
 	}
 }
 
-type envelopeAlreadyWritten struct{ code int }
+type envelopeAlreadyWritten struct {
+	code  int
+	cause error
+}
 
 // Error satisfies the error interface for the sentinel returned after an
 // envelope has already been written.
 func (e *envelopeAlreadyWritten) Error() string { return "envelope already written" }
 
+func (e *envelopeAlreadyWritten) Unwrap() error { return e.cause }
+
+func resultDiagnosticCause(result *CmdResult) error {
+	if result.Cause != nil {
+		return result.Cause
+	}
+	if result.Failure != nil {
+		return resultFailureError(result)
+	}
+	return nil
+}
+
 func resultFailureError(result *CmdResult) error {
-	return &output.CLIError{Failure: result.Failure, ExitCode: result.ExitCode}
+	return &output.CLIError{Failure: result.Failure, ExitCode: result.ExitCode, Cause: result.Cause}
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -300,7 +318,7 @@ func debugf(format string, args ...any) {
 	if ios == nil {
 		initIOStreams()
 	}
-	fmt.Fprintf(ios.ErrOut, format, args...)
+	fmt.Fprint(ios.ErrOut, redactDiagnostic(fmt.Sprintf(format, args...)))
 }
 
 func debugCommand(commandID string) {

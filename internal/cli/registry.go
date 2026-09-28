@@ -46,7 +46,7 @@ func buildCLIRegistryCommand(module command.Module, _ command.Deps) (*cobra.Comm
 			}
 			if result.StreamDone {
 				if result.ExitCode != 0 {
-					return &envelopeAlreadyWritten{code: result.ExitCode}
+					return &envelopeAlreadyWritten{code: result.ExitCode, cause: result.Cause}
 				}
 				return nil
 			}
@@ -54,7 +54,7 @@ func buildCLIRegistryCommand(module command.Module, _ command.Deps) (*cobra.Comm
 				result.Text(ios.Out)
 			}
 			if result.ExitCode != 0 {
-				return &envelopeAlreadyWritten{code: result.ExitCode}
+				return &envelopeAlreadyWritten{code: result.ExitCode, cause: resultDiagnosticCause(FromCommandResult(result))}
 			}
 			return nil
 		})

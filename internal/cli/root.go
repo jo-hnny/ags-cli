@@ -342,8 +342,11 @@ func classifyCLIError(err error) *output.CLIError {
 		return output.ClassifyError(err)
 	}
 	if cliErr.ExitCode == output.ExitGenericError && isCobraUsageError(err) {
-		cliErr = output.NewUsageError("INVALID_USAGE", err.Error(), "Run 'agr --help' or 'agr schema -o json' to inspect valid commands and flags.")
+		cliErr = output.NewUsageError("INVALID_USAGE", err.Error(), "Run 'agr --help' or 'agr schema -o json' to inspect valid commands and flags.").WithCause(err)
 	}
+	copy := *cliErr
+	copy.Failure = sanitizeFailure(cliErr.Failure)
+	cliErr = &copy
 	return cliErr
 }
 
@@ -368,6 +371,7 @@ func commandSpecificUsageHint(cmd *cobra.Command, err error) string {
 }
 
 func renderExecuteError(cmd *cobra.Command, err error, updateCh <-chan *updatecheck.Result) {
+	debugError(err)
 	var envDone *envelopeAlreadyWritten
 	if errors.As(err, &envDone) {
 		printUpdateNotice(updateCh)
@@ -379,7 +383,6 @@ func renderExecuteError(cmd *cobra.Command, err error, updateCh <-chan *updatech
 			cliErr.Failure.Hint = hint
 		}
 	}
-	debugf("Debug: error=%T: %v\n", err, err)
 	if isJSON() || hasRawOutputFlag("json") {
 		cmdID := commandIDForJSONError(cmd, os.Args[1:])
 		env := output.NewFailedEnvelope(cmdID, withIdempotencyHint(cmdID, cliErr.Failure), config.GetBackend(), 0)
@@ -468,7 +471,7 @@ func renderJSONSchemaEnvelope(commandID string, cmd *cobra.Command, args []strin
 		if jqErr := writeEnvelope(ios.Out, commandID, "failed", nil, cliErr.Failure, nil, nil, dm, nil); jqErr != nil {
 			return output.NewUsageError("INVALID_JQ_EXPRESSION", jqErr.Error(), "Check your --jq expression syntax.")
 		}
-		return &envelopeAlreadyWritten{code: cliErr.ExitCode}
+		return &envelopeAlreadyWritten{code: cliErr.ExitCode, cause: err}
 	}
 
 	if result == nil {
@@ -490,7 +493,7 @@ func renderJSONSchemaEnvelope(commandID string, cmd *cobra.Command, args []strin
 		return output.NewUsageError("INVALID_JQ_EXPRESSION", jqErr.Error(), "Check your --jq expression syntax.")
 	}
 	if result.ExitCode != 0 {
-		return &envelopeAlreadyWritten{code: result.ExitCode}
+		return &envelopeAlreadyWritten{code: result.ExitCode, cause: resultDiagnosticCause(result)}
 	}
 	return nil
 }

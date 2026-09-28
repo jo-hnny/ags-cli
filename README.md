@@ -478,6 +478,24 @@ Configuration priority: `--flag` > environment variable > `~/.agr/config.toml` >
 
 ## Troubleshooting
 
+Use `--debug` to write a bounded, redacted error chain to stderr. JSON stdout
+remains one envelope; NDJSON streams retain their single terminal event. Unknown
+errors still show `INTERNAL_ERROR` in normal output. Diagnostics redact active
+SecretId/SecretKey/Token values, Authorization/Cookie headers, signed URL query
+parameters, and URL passwords before writing to stderr. No stack dump or upload
+is performed.
+
+For foreground mobile tunnel failures, token acquisition retains cloud API
+classification and RequestId; timeouts and cancellations retain their own kinds.
+Other WebSocket handshake failures use `NETWORK_ERROR` (exit 1), with optional
+`Failure.Details.Stage=websocket_handshake` and `HTTPStatus` when observed. These
+fields are described by `agr schema -o json` under `Data.FailureDetails` and by
+`agr explain NETWORK_ERROR`. Background `mobile connect` diagnostic forwarding
+is a separate follow-up; it does not yet preserve these details across processes.
+
+Remote programs returning nonzero exit codes keep their existing output and
+exit-code semantics. Diagnostic availability does not make retries safe to replay.
+
 ```bash
 agr status
 agr doctor

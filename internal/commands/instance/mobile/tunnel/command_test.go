@@ -9,10 +9,46 @@ import (
 	"testing"
 	"time"
 
+	"github.com/TencentCloudAgentRuntime/ags-cli/internal/client"
 	"github.com/TencentCloudAgentRuntime/ags-cli/internal/command"
 	"github.com/TencentCloudAgentRuntime/ags-cli/internal/dataplane/adbtunnel"
 	"github.com/TencentCloudAgentRuntime/ags-cli/internal/iostreams"
+	"github.com/TencentCloudAgentRuntime/ags-cli/internal/output"
+	sdkerrors "github.com/tencentcloud/tencentcloud-sdk-go/tencentcloud/common/errors"
 )
+
+func TestProbeFailureClassification(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		cause error
+		kind  string
+		code  string
+		exit  int
+	}{
+		{"auth", sdkerrors.NewTencentCloudSDKError("AuthFailure.Test", "denied", "req-test"), output.KindAuthOrPermission, "AuthFailure.Test", 4},
+		{"timeout", &adbtunnel.HandshakeError{Cause: context.DeadlineExceeded}, output.KindTimeout, "TIMEOUT", 1},
+		{"canceled", &adbtunnel.HandshakeError{Cause: context.Canceled}, output.KindGenericError, "CANCELED", 1},
+		{"handshake", &adbtunnel.HandshakeError{Cause: errors.New("bad handshake"), HTTPStatus: 403}, output.KindNetwork, "NETWORK_ERROR", 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fake := &fakeTunnel{probeErr: tc.cause}
+			_, err := buildRuntime(t, &bytes.Buffer{}, fake, nil).Handler.Run(t.Context(), request(false, 0))
+			got := client.ClassifyError(err)
+			if got.Failure.Kind != tc.kind || got.Failure.Code != tc.code || got.ExitCode != tc.exit || !errors.Is(got, tc.cause) {
+				t.Fatalf("classification=%#v failure=%#v", got, got.Failure)
+			}
+			if tc.name == "handshake" && (got.Failure.Details["HTTPStatus"] != 403 || got.Failure.Details["Stage"] != "websocket_handshake") {
+				t.Fatalf("details=%#v", got.Failure.Details)
+			}
+			if tc.name == "auth" && got.Failure.Details["RequestId"] != "req-test" {
+				t.Fatal("lost cloud RequestId")
+			}
+			if !fake.stopped {
+				t.Fatal("failed probe did not stop tunnel")
+			}
+		})
+	}
+}
 
 func TestModuleDescriptor(t *testing.T) {
 	module := Module()

@@ -1,0 +1,48 @@
+# Error diagnostics coverage (Issue #138, step 1)
+
+The root `renderExecuteError` is the only error-chain printer. It prints before
+checking the already-written-output marker. The marker carries a cause but never
+requests a second envelope or stream event. Debug output is redacted before it
+reaches stderr and limited to 8 KiB plus a truncation marker.
+
+## Exit-path audit
+
+| Path | Diagnostic propagation / reason for no cause |
+| --- | --- |
+| Legacy `Wrap` and JSON-capable registry modules | Handler errors retain causes through classification; JSON markers retain the original error. |
+| Text-only registry modules (`WrapNoJSON`) | Returned errors reach the same root exit; classified session failures retain their causes. |
+| `instance exec` and `instance code run` NDJSON connection/execution failures | The command writes one failed event, and `Result.Cause` passes through `FromCommandResult` and `Handled` to the root exit. |
+| JSON schema/help errors | Already-written markers carry the original cause. |
+| Result-based failures | Explicit causes or the structured failure reach the root; no cause is invented for a business result. |
+| Login, mobile adb, exec/code remote nonzero exit | Remote program result, not a local Go error; preserve exit code/output without an invented debug error. |
+| Successful file download, proxy, mobile tunnel and stream completion | No local failure to diagnose; no error-chain output. Startup/transfer errors still return through the common exit. |
+| Standalone `cmdtree` builder | Propagates `Result.Cause` in its exit error. Production registry installation replaces its RunE with the wrappers above. |
+| Cobra help/argument rejection before a handler | Error returns reach the root. The two direct help-output incompatibility exits have only static usage text, not an underlying error chain. |
+| Background mobile tunnel readiness | String-only protocol and child-log forwarding remain step 2. Step 1 cannot recover types already discarded across this process boundary. |
+
+## `errors.Is` / `errors.As` audit
+
+Classifiers now give an existing CLIError priority over its SDK cause, including
+the direct cloud classifier and dynamic control-plane route. Session classification
+also preserves an existing CLIError before looking for a Connect error. Matching
+timeout/cancellation causes is newly possible without changing their public
+classification. Resource not-found checks continue to inspect the first CLIError's
+Code/Kind. Mobile-list recovery errors and WebSocket close errors do not receive
+new CLI wrappers on their existing paths.
+
+## Regression evidence
+
+- Before implementation, `TestClassificationPreservesCause` failed for unknown,
+  timeout and cancellation errors; `TestDebugErrorProcess` failed for both text
+  and JSON output.
+- The process test uses a synthetic command with no production-command allowlist,
+  exercises legacy/registry/text-only routes, debug on/off and text/JSON/NDJSON,
+  and checks one diagnostic and unchanged machine framing.
+- Command tests drive the real NDJSON connection failure paths using a local
+  token-cache filesystem failure, before any cloud request.
+- A loopback HTTP server rejects the real WebSocket handshake; the test verifies
+  status preservation and omission of its response body.
+- Wrapped classification, cloud RequestId, timeout/cancellation, credential/header/
+  signed-URL redaction and non-mutating failure sanitization have local tests.
+
+No credentialed live cloud or real mobile-device verification is claimed here.
