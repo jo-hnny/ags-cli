@@ -396,199 +396,177 @@ func fillRequest(commandID string, request map[string]any, target jsonRequest) e
 }
 
 func callStartSandboxInstance(ctx context.Context, sdk *ags.Client, req *ags.StartSandboxInstanceRequest) (*ags.StartSandboxInstanceResponseParams, error) {
-	diagnose := client.CloudCallContext(ctx, "StartSandboxInstance")
-	resp, err := sdk.StartSandboxInstanceWithContext(ctx, req)
+	resp, err := client.CallCloud(ctx, "StartSandboxInstance", req, sdk.StartSandboxInstanceWithContext)
 	if err != nil {
-		return nil, client.ClassifyCloudError(diagnose(err))
+		return nil, err
 	}
 	return resp.Response, nil
 }
 
 func callDescribeSandboxInstanceList(ctx context.Context, sdk *ags.Client, req *ags.DescribeSandboxInstanceListRequest) (*ags.DescribeSandboxInstanceListResponseParams, error) {
-	diagnose := client.CloudCallContext(ctx, "DescribeSandboxInstanceList")
-	resp, err := sdk.DescribeSandboxInstanceListWithContext(ctx, req)
+	resp, err := client.CallCloud(ctx, "DescribeSandboxInstanceList", req, sdk.DescribeSandboxInstanceListWithContext)
 	if err != nil {
-		return nil, client.ClassifyCloudError(diagnose(err))
+		return nil, err
 	}
 	return resp.Response, nil
 }
 
 func callUpdateSandboxInstance(ctx context.Context, sdk *ags.Client, req *ags.UpdateSandboxInstanceRequest) (*ags.UpdateSandboxInstanceResponseParams, error) {
-	diagnose := client.CloudCallContext(ctx, "UpdateSandboxInstance")
-	resp, err := sdk.UpdateSandboxInstanceWithContext(ctx, req)
+	resp, err := client.CallCloud(ctx, "UpdateSandboxInstance", req, sdk.UpdateSandboxInstanceWithContext)
 	if err != nil {
-		return nil, client.ClassifyCloudError(diagnose(err))
+		return nil, err
 	}
 	return resp.Response, nil
 }
 
 func callPauseSandboxInstance(ctx context.Context, sdk *ags.Client, req *ags.PauseSandboxInstanceRequest) (*ags.PauseSandboxInstanceResponseParams, error) {
-	diagnose := client.CloudCallContext(ctx, "PauseSandboxInstance")
-	resp, err := sdk.PauseSandboxInstanceWithContext(ctx, req)
+	resp, err := client.CallCloud(ctx, "PauseSandboxInstance", req, sdk.PauseSandboxInstanceWithContext)
 	if err != nil {
-		return nil, client.ClassifyCloudError(diagnose(err))
+		return nil, err
 	}
 	return resp.Response, nil
 }
 
 func callResumeSandboxInstance(ctx context.Context, sdk *ags.Client, req *ags.ResumeSandboxInstanceRequest) (*ags.ResumeSandboxInstanceResponseParams, error) {
-	diagnose := client.CloudCallContext(ctx, "ResumeSandboxInstance")
-	resp, err := sdk.ResumeSandboxInstanceWithContext(ctx, req)
+	resp, err := client.CallCloud(ctx, "ResumeSandboxInstance", req, sdk.ResumeSandboxInstanceWithContext)
 	if err != nil {
-		return nil, client.ClassifyCloudError(diagnose(err))
+		return nil, err
 	}
 	return resp.Response, nil
 }
 
 func callStopSandboxInstance(ctx context.Context, sdk *ags.Client, req *ags.StopSandboxInstanceRequest) (*ags.StopSandboxInstanceResponseParams, error) {
-	diagnose := client.CloudCallContext(ctx, "StopSandboxInstance")
-	resp, err := sdk.StopSandboxInstanceWithContext(ctx, req)
+	resp, err := client.CallCloud(ctx, "StopSandboxInstance", req, sdk.StopSandboxInstanceWithContext)
 	if err != nil {
-		return nil, client.ClassifyCloudError(diagnose(err))
+		return nil, err
 	}
 	return resp.Response, nil
 }
 
 func callAcquireSandboxInstanceToken(ctx context.Context, sdk *ags.Client, req *ags.AcquireSandboxInstanceTokenRequest) (*ags.AcquireSandboxInstanceTokenResponseParams, error) {
-	diagnose := client.CloudCallContext(ctx, "AcquireSandboxInstanceToken")
-	resp, err := sdk.AcquireSandboxInstanceTokenWithContext(ctx, req)
+	resp, err := client.CallCloud(ctx, "AcquireSandboxInstanceToken", req, sdk.AcquireSandboxInstanceTokenWithContext)
 	if err != nil {
-		return nil, client.ClassifyCloudError(diagnose(err))
+		return nil, err
 	}
 	return resp.Response, nil
 }
 
 func callCreateSandboxTool(ctx context.Context, sdk *ags.Client, req *ags.CreateSandboxToolRequest) (*ags.CreateSandboxToolResponseParams, error) {
-	diagnose := client.CloudCallContext(ctx, "CreateSandboxTool")
-	resp, err := sdk.CreateSandboxToolWithContext(ctx, req)
+	resp, err := client.CallCloud(ctx, "CreateSandboxTool", req, sdk.CreateSandboxToolWithContext)
 	if err != nil {
-		return nil, client.ClassifyCloudError(diagnose(err))
+		return nil, err
 	}
 	return resp.Response, nil
 }
 
 func callDescribeSandboxToolList(ctx context.Context, sdk *ags.Client, req *ags.DescribeSandboxToolListRequest) (*ags.DescribeSandboxToolListResponseParams, error) {
-	diagnose := client.CloudCallContext(ctx, "DescribeSandboxToolList")
-	resp, err := sdk.DescribeSandboxToolListWithContext(ctx, req)
+	resp, err := client.CallCloud(ctx, "DescribeSandboxToolList", req, sdk.DescribeSandboxToolListWithContext)
 	if err != nil {
-		return nil, client.ClassifyCloudError(diagnose(err))
+		return nil, err
 	}
 	return resp.Response, nil
 }
 
 func callUpdateSandboxTool(ctx context.Context, sdk *ags.Client, req *ags.UpdateSandboxToolRequest) (*ags.UpdateSandboxToolResponseParams, error) {
-	diagnose := client.CloudCallContext(ctx, "UpdateSandboxTool")
-	resp, err := sdk.UpdateSandboxToolWithContext(ctx, req)
+	resp, err := client.CallCloud(ctx, "UpdateSandboxTool", req, sdk.UpdateSandboxToolWithContext)
 	if err != nil {
-		return nil, client.ClassifyCloudError(diagnose(err))
+		return nil, err
 	}
 	return resp.Response, nil
 }
 
 func callDeleteSandboxTool(ctx context.Context, sdk *ags.Client, req *ags.DeleteSandboxToolRequest) (*ags.DeleteSandboxToolResponseParams, error) {
-	diagnose := client.CloudCallContext(ctx, "DeleteSandboxTool")
-	resp, err := sdk.DeleteSandboxToolWithContext(ctx, req)
+	resp, err := client.CallCloud(ctx, "DeleteSandboxTool", req, sdk.DeleteSandboxToolWithContext)
 	if err != nil {
-		return nil, client.ClassifyCloudError(diagnose(err))
+		return nil, err
 	}
 	return resp.Response, nil
 }
 
 func callCreateAPIKey(ctx context.Context, sdk *ags.Client, req *ags.CreateAPIKeyRequest) (*ags.CreateAPIKeyResponseParams, error) {
-	diagnose := client.CloudCallContext(ctx, "CreateAPIKey")
-	resp, err := sdk.CreateAPIKeyWithContext(ctx, req)
+	resp, err := client.CallCloud(ctx, "CreateAPIKey", req, sdk.CreateAPIKeyWithContext)
 	if err != nil {
-		return nil, client.ClassifyCloudError(diagnose(err))
+		return nil, err
 	}
 	return resp.Response, nil
 }
 
 func callDescribeAPIKeyList(ctx context.Context, sdk *ags.Client, req *ags.DescribeAPIKeyListRequest) (*ags.DescribeAPIKeyListResponseParams, error) {
-	diagnose := client.CloudCallContext(ctx, "DescribeAPIKeyList")
-	resp, err := sdk.DescribeAPIKeyListWithContext(ctx, req)
+	resp, err := client.CallCloud(ctx, "DescribeAPIKeyList", req, sdk.DescribeAPIKeyListWithContext)
 	if err != nil {
-		return nil, client.ClassifyCloudError(diagnose(err))
+		return nil, err
 	}
 	return resp.Response, nil
 }
 
 func callDeleteAPIKey(ctx context.Context, sdk *ags.Client, req *ags.DeleteAPIKeyRequest) (*ags.DeleteAPIKeyResponseParams, error) {
-	diagnose := client.CloudCallContext(ctx, "DeleteAPIKey")
-	resp, err := sdk.DeleteAPIKeyWithContext(ctx, req)
+	resp, err := client.CallCloud(ctx, "DeleteAPIKey", req, sdk.DeleteAPIKeyWithContext)
 	if err != nil {
-		return nil, client.ClassifyCloudError(diagnose(err))
+		return nil, err
 	}
 	return resp.Response, nil
 }
 
 func callCreatePreCacheImageTask(ctx context.Context, sdk *ags.Client, req *ags.CreatePreCacheImageTaskRequest) (*ags.CreatePreCacheImageTaskResponseParams, error) {
-	diagnose := client.CloudCallContext(ctx, "CreatePreCacheImageTask")
-	resp, err := sdk.CreatePreCacheImageTaskWithContext(ctx, req)
+	resp, err := client.CallCloud(ctx, "CreatePreCacheImageTask", req, sdk.CreatePreCacheImageTaskWithContext)
 	if err != nil {
-		return nil, client.ClassifyCloudError(diagnose(err))
+		return nil, err
 	}
 	return resp.Response, nil
 }
 
 func callDescribePreCacheImageTask(ctx context.Context, sdk *ags.Client, req *ags.DescribePreCacheImageTaskRequest) (*ags.DescribePreCacheImageTaskResponseParams, error) {
-	diagnose := client.CloudCallContext(ctx, "DescribePreCacheImageTask")
-	resp, err := sdk.DescribePreCacheImageTaskWithContext(ctx, req)
+	resp, err := client.CallCloud(ctx, "DescribePreCacheImageTask", req, sdk.DescribePreCacheImageTaskWithContext)
 	if err != nil {
-		return nil, client.ClassifyCloudError(diagnose(err))
+		return nil, err
 	}
 	return resp.Response, nil
 }
 
 func callCreateDeployment(ctx context.Context, sdk *ags.Client, req *ags.CreateDeploymentRequest) (*ags.CreateDeploymentResponseParams, error) {
-	diagnose := client.CloudCallContext(ctx, "CreateDeployment")
-	resp, err := sdk.CreateDeploymentWithContext(ctx, req)
+	resp, err := client.CallCloud(ctx, "CreateDeployment", req, sdk.CreateDeploymentWithContext)
 	if err != nil {
-		return nil, client.ClassifyCloudError(diagnose(err))
+		return nil, err
 	}
 	return resp.Response, nil
 }
 
 func callDeleteDeployment(ctx context.Context, sdk *ags.Client, req *ags.DeleteDeploymentRequest) (*ags.DeleteDeploymentResponseParams, error) {
-	diagnose := client.CloudCallContext(ctx, "DeleteDeployment")
-	resp, err := sdk.DeleteDeploymentWithContext(ctx, req)
+	resp, err := client.CallCloud(ctx, "DeleteDeployment", req, sdk.DeleteDeploymentWithContext)
 	if err != nil {
-		return nil, client.ClassifyCloudError(diagnose(err))
+		return nil, err
 	}
 	return resp.Response, nil
 }
 
 func callDescribeDeployment(ctx context.Context, sdk *ags.Client, req *ags.DescribeDeploymentRequest) (*ags.DescribeDeploymentResponseParams, error) {
-	diagnose := client.CloudCallContext(ctx, "DescribeDeployment")
-	resp, err := sdk.DescribeDeploymentWithContext(ctx, req)
+	resp, err := client.CallCloud(ctx, "DescribeDeployment", req, sdk.DescribeDeploymentWithContext)
 	if err != nil {
-		return nil, client.ClassifyCloudError(diagnose(err))
+		return nil, err
 	}
 	return resp.Response, nil
 }
 
 func callDescribeDeploymentList(ctx context.Context, sdk *ags.Client, req *ags.DescribeDeploymentListRequest) (*ags.DescribeDeploymentListResponseParams, error) {
-	diagnose := client.CloudCallContext(ctx, "DescribeDeploymentList")
-	resp, err := sdk.DescribeDeploymentListWithContext(ctx, req)
+	resp, err := client.CallCloud(ctx, "DescribeDeploymentList", req, sdk.DescribeDeploymentListWithContext)
 	if err != nil {
-		return nil, client.ClassifyCloudError(diagnose(err))
+		return nil, err
 	}
 	return resp.Response, nil
 }
 
 func callModifyDeployment(ctx context.Context, sdk *ags.Client, req *ags.ModifyDeploymentRequest) (*ags.ModifyDeploymentResponseParams, error) {
-	diagnose := client.CloudCallContext(ctx, "ModifyDeployment")
-	resp, err := sdk.ModifyDeploymentWithContext(ctx, req)
+	resp, err := client.CallCloud(ctx, "ModifyDeployment", req, sdk.ModifyDeploymentWithContext)
 	if err != nil {
-		return nil, client.ClassifyCloudError(diagnose(err))
+		return nil, err
 	}
 	return resp.Response, nil
 }
 
 func callAcquireDeploymentToken(ctx context.Context, sdk *ags.Client, req *ags.AcquireDeploymentTokenRequest) (*ags.AcquireDeploymentTokenResponseParams, error) {
-	diagnose := client.CloudCallContext(ctx, "AcquireDeploymentToken")
-	resp, err := sdk.AcquireDeploymentTokenWithContext(ctx, req)
+	resp, err := client.CallCloud(ctx, "AcquireDeploymentToken", req, sdk.AcquireDeploymentTokenWithContext)
 	if err != nil {
-		return nil, client.ClassifyCloudError(diagnose(err))
+		return nil, err
 	}
 	return resp.Response, nil
 }

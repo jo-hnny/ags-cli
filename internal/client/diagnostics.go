@@ -14,3 +14,11 @@ func CloudCallContext(ctx context.Context, action string) func(error) error {
 	details["Operation"] = action
 	return func(err error) error { return output.WithContext(err, details) }
 }
+
+// CallCloud captures diagnostics before invoking a typed SDK method and preserves
+// the existing cloud classification. Callers only extract the response payload.
+func CallCloud[Request, Response any](ctx context.Context, action string, request Request, invoke func(context.Context, Request) (Response, error)) (Response, error) {
+	diagnose := CloudCallContext(ctx, action)
+	response, err := invoke(ctx, request)
+	return response, ClassifyCloudError(diagnose(err))
+}

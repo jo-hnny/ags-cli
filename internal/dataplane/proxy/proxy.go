@@ -166,7 +166,11 @@ func (p *Proxy) Start() (string, error) {
 	reverseProxy.ModifyResponse = func(response *http.Response) error {
 		p.captureAffinityResponse(response.Request.Context(), response.Header)
 		if response.StatusCode >= 400 {
-			p.logger.Printf("[ERROR] Proxy upstream response: %v", output.HTTPContext(context.Background(), "http_response", response.Request.URL.String(), 0, response))
+			level := "HTTP"
+			if response.StatusCode >= 500 {
+				level = "ERROR"
+			}
+			p.logger.Printf("[%s] Proxy upstream response: %v", level, output.HTTPContext(context.Background(), "http_response", response.Request.URL.String(), 0, response))
 		}
 		return nil
 	}
