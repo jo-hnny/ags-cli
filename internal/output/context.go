@@ -1,7 +1,6 @@
 package output
 
 import (
-	"errors"
 	"maps"
 	"os"
 )
@@ -23,19 +22,11 @@ type contextError struct {
 func (e *contextError) Unwrap() error { return e.error }
 
 func withErrorContext(f *Failure, err error) *Failure {
-	details := map[string]any{}
-	var pathErr *os.PathError
-	if errors.As(err, &pathErr) {
-		details["Operation"] = pathErr.Op
-		details["Path"] = pathErr.Path
-		details["Stage"] = "local_file"
-	}
-	// Inner boundaries are more specific than their callers. Existing classified
-	// details remain authoritative (for example a child's ready-stage failure).
-	for current := err; current != nil; current = errors.Unwrap(current) {
-		if contextual, ok := current.(*contextError); ok {
-			maps.Copy(details, contextual.details)
-		}
+	details, pathErr := errorContext(err)
+	if pathErr != nil {
+		defaults := map[string]any{"Operation": pathErr.Op, "Path": pathErr.Path, "Stage": "local_file"}
+		maps.Copy(defaults, details)
+		details = defaults
 	}
 	if len(details) == 0 {
 		return f
@@ -44,4 +35,36 @@ func withErrorContext(f *Failure, err error) *Failure {
 	copy := *f
 	copy.Details = details
 	return &copy
+}
+
+// Inner boundaries override outer metadata; classified Failure details remain
+// authoritative. At a join, select the first branch containing metadata in
+// depth-first, left-to-right order. Never mix sibling targets/stages: they may
+// describe different operations. All branches remain accessible via Is/As.
+func errorContext(err error) (map[string]any, *os.PathError) {
+	var pathErr *os.PathError
+	details := map[string]any{}
+	switch e := err.(type) {
+	case *os.PathError:
+		pathErr = e
+	case *contextError:
+		maps.Copy(details, e.details)
+	}
+	switch e := err.(type) {
+	case interface{ Unwrap() error }:
+		inner, path := errorContext(e.Unwrap())
+		maps.Copy(details, inner)
+		if path != nil {
+			pathErr = path
+		}
+	case interface{ Unwrap() []error }:
+		for _, child := range e.Unwrap() {
+			if branch, path := errorContext(child); len(branch) > 0 || path != nil {
+				pathErr = path
+				maps.Copy(details, branch)
+				break
+			}
+		}
+	}
+	return details, pathErr
 }

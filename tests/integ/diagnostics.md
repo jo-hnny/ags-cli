@@ -113,3 +113,22 @@ process-identity `ps` fallback returns a boolean and intentionally keeps its
 existing cleanup policy; registryHTTP belongs to patch-test fixture setup, not
 the shipped command request path. These helpers do not emit CLI failures and
 are not converted into new failure envelopes by this change.
+
+## Reviewer regression guards
+
+Typed Cloud API wrappers use the generic `client.CallCloud` helper to capture
+context before invocation and preserve classification. AST tests scan both wrapper
+files, including anonymous functions, reject SDK calls/method references outside
+the helper and require the Action to match its SDK method. In-memory mutations
+remove a real helper invocation in each file; negative fixtures cover new direct
+calls, context-free calls, method aliases and mismatched Actions.
+
+HTTP proxy business responses (4xx) use `[HTTP]`; 5xx use `[ERROR]`. Both retain
+observed status and allowlisted request IDs. Tests cover 401/404/503 with verbose
+on/off. WebSocket handshake rejection remains a connection failure with `[ERROR]`.
+
+Context collection supports joined/multiple-wrapped errors. Inner context wins
+within one chain, existing classified details remain authoritative, and the first
+metadata-bearing branch wins at a join. Sibling fields are not combined; all causes
+remain available to `errors.Is/As`. Tests exercise both `errors.Join` and multiple
+`%w`, including filesystem fallback and conflicting sibling metadata.
