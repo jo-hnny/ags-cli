@@ -486,9 +486,12 @@ parameters, and URL passwords before writing to stderr. No stack dump or upload
 is performed.
 
 Redaction also applies to ordinary text errors and JSON/NDJSON `Failure` fields,
-including nested `Details`. Message, hint, fix, and detail strings are capped at
-8 KiB plus a truncation marker without splitting UTF-8 characters. Non-sensitive
-content within that limit is preserved; output framing is unchanged.
+including nested `Details`, without truncating ordinary error strings. Only debug
+diagnostics are capped at 8 KiB plus a UTF-8-safe truncation marker. Header
+redaction preserves surrounding status text, and URL redaction changes only
+passwords and sensitive query values, even when unrelated URL escapes are malformed.
+Generic `Details.token`/`signature`/`sig` fields are not hidden by name alone;
+known credential values and explicit credential/header fields are still redacted.
 
 For foreground mobile tunnel failures, token acquisition retains cloud API
 classification and RequestId; timeouts and cancellations retain their own kinds.

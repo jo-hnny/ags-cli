@@ -451,8 +451,9 @@ NDJSON 流仍只输出一次终止事件；未知错误在普通模式下仍显�
 诊断写出前会处理当前生效的 SecretId/SecretKey/Token、Authorization/Cookie 请求头、
 URL 签名参数及 URL 密码，不生成堆栈转储或上传日志。
 普通 text 错误和 JSON/NDJSON 的 Failure 字段（含嵌套 Details）也会脱敏；
-Message、Hint、Fix 及 Details 中的字符串限制为 8 KiB 加截断标记，不切断 UTF-8 字符。
-限长以内且不含敏感内容的文本保持不变，输出结构不变。
+普通错误字符串不截断，仅 debug 诊断限制为 8 KiB 加 UTF-8 安全截断标记。
+头部脱敏保留周围状态文字，URL 只替换密码和敏感 query 值；其他参数转义损坏时也不整段隐藏。
+Details 中通用的 token/signature/sig 字段不再仅凭名字隐藏；已知凭据值及明确的凭据/头部字段仍会脱敏。
 
 前台 mobile tunnel 获取 token 失败时保留云 API 分类和 RequestId；超时、取消保留各自分类。
 握手 HTTP 401/403 返回 `TUNNEL_AUTH_FAILED`（退出码 4）。本地端口占用返回

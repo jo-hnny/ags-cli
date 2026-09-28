@@ -23,6 +23,9 @@ func TestDebugErrorProcess(t *testing.T) {
 	if os.Getenv("AGR_TEST_DEBUG_HELPER") == "1" {
 		mode, route := os.Getenv("AGR_TEST_OUTPUT"), os.Getenv("AGR_TEST_ROUTE")
 		cause := fmt.Errorf("opening test connection: %w", errors.New("unique-original-cause credential=test-secret https://user:proxy-pass@localhost/path?Signature=signed-value"))
+		if os.Getenv("AGR_TEST_PRESERVE") == "1" {
+			cause = output.NewCLIError(&output.Failure{Code: "CUSTOM", Kind: output.KindGenericError, Message: strings.Repeat("x", 9000) + " Authorization: Bearer private-token; upstream returned 403"})
+		}
 		spec := command.Spec{ID: "diagnostic-test", Path: []string{"diagnostic-test"}, Use: "diagnostic-test", Short: "test", SupportsJSON: route != "text-only"}
 		if mode == "ndjson" {
 			spec.ID = "instance.exec"
@@ -170,9 +173,59 @@ func TestOrdinaryFailureCompatibility(t *testing.T) {
 	}
 	for _, length := range []int{diagnosticLimit - 1, diagnosticLimit - 2} {
 		raw := strings.Repeat("x", length) + "错误"
-		clean := sanitizeFailure(&output.Failure{Message: raw}).Message
+		clean := redactDiagnostic(raw)
 		if !utf8.ValidString(clean) || !strings.HasSuffix(clean, " [truncated]") {
 			t.Fatalf("invalid truncation: %q", clean[length-1:])
 		}
+	}
+}
+
+func TestRedactionPreservesFailureContext(t *testing.T) {
+	for _, tc := range []struct{ raw, want string }{
+		{`Authorization: Digest username="user", response="private-signature"; upstream returned 403`, "Authorization: [REDACTED]; upstream returned 403"},
+		{`Authorization: Bearer "private-token"; upstream returned 403`, "Authorization: [REDACTED]; upstream returned 403"},
+		{"Authorization: Bearer private-token upstream returned 403", "Authorization: [REDACTED] upstream returned 403"},
+		{`"Authorization":"Bearer private-token", "reason":"upstream returned 403"`, `"Authorization":"[REDACTED]", "reason":"upstream returned 403"`},
+		{`"Cookie":"session=private-cookie; other=private-value", "reason":"upstream returned 403"`, `"Cookie":"session=[REDACTED]; other=[REDACTED]", "reason":"upstream returned 403"`},
+		{"Authorization: Bearer private-token; upstream returned 403", "authorization: [REDACTED]; upstream returned 403"},
+		{"Cookie: session=private-cookie; other=private-value; upstream returned 403", "Cookie: session=[REDACTED]; other=[REDACTED]; upstream returned 403"},
+		{"https://user:password@host/bad%zz?Signature=secret&normal=%zz&last=keep", "https://user:REDACTED@host/bad%zz?Signature=REDACTED&normal=%zz&last=keep"},
+		{"https://host/?normal=%zz&signature=secret;last=keep", "https://host/?normal=%zz&signature=REDACTED;last=keep"},
+		{"https://host/?normal=%zz&last=keep", "https://host/?normal=%zz&last=keep"},
+	} {
+		got := redactSensitive(tc.raw)
+		if !strings.EqualFold(got, tc.want) {
+			t.Errorf("redaction: got %q want %q", got, tc.want)
+		}
+	}
+	long := strings.Repeat("错", 4000) + "root cause at end"
+	original := &output.Failure{Message: long, Hint: long, Fix: long, Details: map[string]any{"signature": "func(context.Context) error", "token": "unexpected identifier", "nested": map[string]any{"reason": long, "SecretKey": "private-key"}}}
+	got := sanitizeFailure(original)
+	if got.Message != long || got.Hint != long || got.Fix != long || got.Details["signature"] != original.Details["signature"] || got.Details["token"] != original.Details["token"] {
+		t.Fatal("ordinary failure context lost")
+	}
+	nested := got.Details["nested"].(map[string]any)
+	if nested["reason"] != long || nested["SecretKey"] != "[REDACTED]" {
+		t.Fatal("nested detail policy incorrect")
+	}
+}
+
+func TestOrdinaryFailureProcessPreservesLongContext(t *testing.T) {
+	for _, mode := range []string{"text", "json", "ndjson"} {
+		t.Run(mode, func(t *testing.T) {
+			cmd := exec.CommandContext(t.Context(), os.Args[0], "-test.run=^TestDebugErrorProcess$")
+			home := t.TempDir()
+			cmd.Env = append(os.Environ(), "AGR_TEST_DEBUG_HELPER=1", "AGR_TEST_OUTPUT="+mode, "AGR_TEST_ROUTE=registry", "AGR_TEST_DEBUG=0", "AGR_TEST_PRESERVE=1", "HOME="+home, "USERPROFILE="+home)
+			var stdout, stderr bytes.Buffer
+			cmd.Stdout, cmd.Stderr = &stdout, &stderr
+			var exit *exec.ExitError
+			if err := cmd.Run(); !errors.As(err, &exit) || exit.ExitCode() != 1 {
+				t.Fatalf("exit=%v", err)
+			}
+			combined := stdout.String() + stderr.String()
+			if strings.Contains(combined, "private-token") || strings.Contains(combined, "[truncated]") || !strings.Contains(combined, strings.Repeat("x", 9000)) || !strings.Contains(combined, "upstream returned 403") {
+				t.Fatalf("context lost or secret leaked in %s output", mode)
+			}
+		})
 	}
 }

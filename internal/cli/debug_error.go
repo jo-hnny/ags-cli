@@ -16,43 +16,36 @@ import (
 const diagnosticLimit = 8192
 
 var diagnosticURL = regexp.MustCompile(`[a-zA-Z][a-zA-Z0-9+.-]*://[^\s<>"']+`)
-var diagnosticHeader = regexp.MustCompile(`(?im)\b(authorization|proxy-authorization|cookie|set-cookie)["']?\s*[:=]\s*[^\r\n]+`)
 
-// Redact before truncating: truncation must not leave a partial credential.
-func redactDiagnostic(text string) string {
-	text = diagnosticURL.ReplaceAllStringFunc(text, func(raw string) string {
-		u, err := url.Parse(raw)
-		if err != nil {
-			return "[REDACTED URL]"
-		}
-		changed := false
-		if u.User != nil {
-			if _, ok := u.User.Password(); ok {
-				u.User = url.UserPassword(u.User.Username(), "REDACTED")
-				changed = true
+// Header values end at a semicolon in inline diagnostics; do not consume the
+// following operation/status text. Cookie pairs are handled separately.
+var diagnosticHeader = regexp.MustCompile(`(?im)(\b(?:authorization|proxy-authorization)["']?\s*[:=]\s*["']?)(?:(?:Bearer|Basic)\s+(?:"[^"]*"|'[^']*'|[^\s;,"']+)|(?:[^;\r\n"']+|"[^"]*"|'[^']*')+)`)
+var diagnosticCookie = regexp.MustCompile(`(?i)\b(cookie|set-cookie)["']?\s*[:=]\s*["']?`)
+var diagnosticCookiePair = regexp.MustCompile(`^(\s*[^=\s;"']+\s*=\s*)("[^"]*"|[^;\s"']+)(;\s*)?`)
+var diagnosticQuery = regexp.MustCompile(`([?&;])([^=&#;]+)=([^&#;]*)`)
+
+// Normal failures redact sensitive values without imposing a diagnostic limit.
+func redactSensitive(text string) string {
+	text = diagnosticURL.ReplaceAllStringFunc(text, redactURL)
+	text = diagnosticHeader.ReplaceAllString(text, "${1}[REDACTED]")
+	// Work backwards so replacing cookie values does not invalidate offsets.
+	matches := diagnosticCookie.FindAllStringIndex(text, -1)
+	for i := len(matches) - 1; i >= 0; i-- {
+		end := matches[i][1]
+		rest := text[end:]
+		var clean strings.Builder
+		for {
+			pair := diagnosticCookiePair.FindStringSubmatch(rest)
+			if pair == nil {
+				break
 			}
+			clean.WriteString(pair[1])
+			clean.WriteString("[REDACTED]")
+			clean.WriteString(pair[3])
+			rest = rest[len(pair[0]):]
 		}
-		query, err := url.ParseQuery(u.RawQuery)
-		if err != nil {
-			u.RawQuery = "REDACTED"
-			changed = true
-		} else {
-			for key := range query {
-				if sensitiveDiagnosticKey(key) {
-					query.Set(key, "REDACTED")
-					changed = true
-				}
-			}
-			if changed {
-				u.RawQuery = query.Encode()
-			}
-		}
-		if !changed {
-			return raw
-		}
-		return u.String()
-	})
-	text = diagnosticHeader.ReplaceAllString(text, "$1: [REDACTED]")
+		text = text[:end] + clean.String() + rest
+	}
 	secrets := []string{secretID, secretKey, tokenFlag, config.GetSecretID(), config.GetSecretKey(), config.GetToken()}
 	// Replace longer overlapping values first.
 	slices.SortFunc(secrets, func(a, b string) int { return len(b) - len(a) })
@@ -62,6 +55,12 @@ func redactDiagnostic(text string) string {
 			text = strings.ReplaceAll(text, url.QueryEscape(secret), "[REDACTED]")
 		}
 	}
+	return text
+}
+
+// Redact before truncating: truncation must not leave a partial credential.
+func redactDiagnostic(text string) string {
+	text = redactSensitive(text)
 	if len(text) > diagnosticLimit {
 		end := diagnosticLimit
 		for end > 0 && !utf8.RuneStart(text[end]) {
@@ -70,6 +69,51 @@ func redactDiagnostic(text string) string {
 		text = text[:end] + " [truncated]"
 	}
 	return text
+}
+
+// Redact components in place instead of parsing/re-encoding the whole URL.
+// A malformed escape in an unrelated parameter must not hide the whole query.
+func redactURL(raw string) string {
+	schemeEnd := strings.Index(raw, "://") + 3
+	authorityEnd := len(raw)
+	if i := strings.IndexAny(raw[schemeEnd:], "/?#"); i >= 0 {
+		authorityEnd = schemeEnd + i
+	}
+	authority := raw[schemeEnd:authorityEnd]
+	if at := strings.LastIndexByte(authority, '@'); at >= 0 {
+		if colon := strings.IndexByte(authority[:at], ':'); colon >= 0 {
+			raw = raw[:schemeEnd] + authority[:colon+1] + "REDACTED" + authority[at:] + raw[authorityEnd:]
+		}
+	}
+	queryStart := strings.IndexByte(raw, '?')
+	fragment := strings.IndexByte(raw, '#')
+	if queryStart < 0 || (fragment >= 0 && fragment < queryStart) {
+		return raw
+	}
+	queryEnd := len(raw)
+	if fragment >= 0 {
+		queryEnd = fragment
+	}
+	query := diagnosticQuery.ReplaceAllStringFunc(raw[queryStart:queryEnd], func(part string) string {
+		key, _, _ := strings.Cut(part[1:], "=")
+		decoded, err := url.QueryUnescape(key)
+		if err == nil && sensitiveDiagnosticKey(decoded) {
+			return part[:strings.IndexByte(part, '=')+1] + "REDACTED"
+		}
+		return part
+	})
+	return raw[:queryStart] + query + raw[queryEnd:]
+}
+
+// Only unambiguous credential/header fields are sensitive outside URL queries.
+// Generic token/signature/sig fields may describe application data or functions.
+func sensitiveDetailKey(key string) bool {
+	switch strings.ToLower(key) {
+	case "token", "signature", "sig":
+		return false
+	default:
+		return sensitiveDiagnosticKey(key)
+	}
 }
 
 func sensitiveDiagnosticKey(key string) bool {
@@ -127,9 +171,9 @@ func sanitizeFailure(failure *output.Failure) *output.Failure {
 		return nil
 	}
 	copy := *failure
-	copy.Message = redactDiagnostic(copy.Message)
-	copy.Hint = redactDiagnostic(copy.Hint)
-	copy.Fix = redactDiagnostic(copy.Fix)
+	copy.Message = redactSensitive(copy.Message)
+	copy.Hint = redactSensitive(copy.Hint)
+	copy.Fix = redactSensitive(copy.Fix)
 	if failure.Details != nil {
 		data, err := json.Marshal(failure.Details)
 		if err != nil {
@@ -149,10 +193,10 @@ func sanitizeFailure(failure *output.Failure) *output.Failure {
 func sanitizeDiagnosticValue(value any) any {
 	switch typed := value.(type) {
 	case string:
-		return redactDiagnostic(typed)
+		return redactSensitive(typed)
 	case map[string]any:
 		for key, item := range typed {
-			if sensitiveDiagnosticKey(key) {
+			if sensitiveDetailKey(key) {
 				typed[key] = "[REDACTED]"
 			} else {
 				typed[key] = sanitizeDiagnosticValue(item)
