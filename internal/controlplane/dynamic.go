@@ -17,10 +17,11 @@ func (s *SDK) callDynamic(ctx context.Context, action string, request map[string
 	if err != nil {
 		return nil, err
 	}
+	diagnose := client.CloudCallContext(ctx, action)
 	result, err := (RawAPIClient{Sender: s.RawSender}).RawCall(ctx, action, raw)
 	if err != nil {
 		if ctx.Err() != nil {
-			return nil, ctx.Err()
+			return nil, diagnose(ctx.Err())
 		}
 		return nil, client.ClassifyError(err)
 	}
@@ -33,7 +34,7 @@ func (s *SDK) callDynamic(ctx context.Context, action string, request map[string
 		return nil, fmt.Errorf("%s: response has no Response object", action)
 	}
 	if failure := response.Object("Error"); failure != nil {
-		return nil, client.ClassifyCloudError(sdkerrors.NewTencentCloudSDKError(failure.String("Code"), failure.String("Message"), response.String("RequestId")))
+		return nil, client.ClassifyCloudError(diagnose(sdkerrors.NewTencentCloudSDKError(failure.String("Code"), failure.String("Message"), response.String("RequestId"))))
 	}
 	if action == "StartSandboxInstance" {
 		instance := response.Object("Instance")
