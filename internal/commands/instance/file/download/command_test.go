@@ -3,6 +3,7 @@ package download
 import (
 	"bytes"
 	"context"
+	"errors"
 	"io"
 	"os"
 	"path/filepath"
@@ -126,4 +127,14 @@ func setupConfig(t *testing.T) {
 
 func testIO() *iostreams.IOStreams {
 	return &iostreams.IOStreams{In: &bytes.Buffer{}, Out: &bytes.Buffer{}, ErrOut: &bytes.Buffer{}}
+}
+
+type failedDownloadReader struct{}
+
+func (failedDownloadReader) Read([]byte) (int, error) { return 0, io.ErrUnexpectedEOF }
+func TestDownloadStreamFailureIsReported(t *testing.T) {
+	result, err := writeDownloadResult(failedDownloadReader{}, -1, "remote", "-", io.Discard)
+	if result != nil || !errors.Is(err, io.ErrUnexpectedEOF) {
+		t.Fatalf("result=%v err=%v", result, err)
+	}
 }

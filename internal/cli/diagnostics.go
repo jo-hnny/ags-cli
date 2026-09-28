@@ -59,5 +59,5 @@ func describeConfigIssue(err error) configIssue {
 
 func newConfigUsageError(err error) *output.CLIError {
 	issue := describeConfigIssue(err)
-	return output.NewUsageError("INVALID_CONFIG", err.Error(), issue.Hint)
+	return output.NewUsageError("INVALID_CONFIG", err.Error(), issue.Hint).WithCause(output.WithContext(err, map[string]any{"Stage": "config_validate", "Field": issue.Name}))
 }

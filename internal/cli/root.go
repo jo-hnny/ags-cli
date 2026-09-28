@@ -768,7 +768,7 @@ func initConfig() {
 	configuredOutput = ""
 	config.SetConfigFile(cfgFile)
 	if err := config.Init(); err != nil {
-		configInitErr = output.NewUsageError("CONFIG_INIT_FAILED", err.Error(), "Fix the config file path or TOML syntax, then rerun the command.")
+		configInitErr = output.NewUsageError("CONFIG_INIT_FAILED", err.Error(), "Fix the config file path or TOML syntax, then rerun the command.").WithCause(err)
 	}
 	// Merge env vars into interactive/color flags
 	if os.Getenv("NO_COLOR") != "" {
