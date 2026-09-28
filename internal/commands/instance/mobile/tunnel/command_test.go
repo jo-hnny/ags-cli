@@ -197,7 +197,11 @@ func TestTunnelOccupiedPort(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer listener.Close()
+	t.Cleanup(func() {
+		if err := listener.Close(); err != nil {
+			t.Errorf("close listener: %v", err)
+		}
+	})
 	port := listener.Addr().(*net.TCPAddr).Port
 	rt := runtimeDeps(RuntimeDeps{ValidateConfig: func() error { return nil }})
 	_, err = runTunnel(t.Context(), request(false, port), command.Deps{IO: &iostreams.IOStreams{Out: &bytes.Buffer{}}}, rt)
