@@ -37,9 +37,9 @@ func redactSensitive(text string) string {
 		for {
 			pair := diagnosticCookiePair.FindStringSubmatch(rest)
 			if pair == nil {
-				// A nonstandard bare header value may still be a credential.
-				// Only consume its first token, retaining following context.
-				if clean.Len() == 0 {
+				// Bare values need a header boundary; prose such as
+				// "failed to set cookie: permission denied" is not a header.
+				if clean.Len() == 0 && isCookieHeaderStart(text, matches[i][0]) {
 					n := strings.IndexAny(rest, "; \t\r\n\"',")
 					if n < 0 {
 						n = len(rest)
@@ -68,6 +68,20 @@ func redactSensitive(text string) string {
 		}
 	}
 	return text
+}
+
+func isCookieHeaderStart(text string, start int) bool {
+	lineStart := strings.LastIndexByte(text[:start], '\n') + 1
+	prefix := strings.TrimSpace(text[lineStart:start])
+	if prefix == "" {
+		return true
+	}
+	// A quoted field at the start of a line or after an object delimiter.
+	if strings.HasSuffix(prefix, "\"") || strings.HasSuffix(prefix, "'") {
+		prefix = strings.TrimSpace(prefix[:len(prefix)-1])
+		return prefix == "" || strings.HasSuffix(prefix, "{") || strings.HasSuffix(prefix, ",")
+	}
+	return false
 }
 
 // Redact before truncating: truncation must not leave a partial credential.

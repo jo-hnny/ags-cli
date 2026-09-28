@@ -182,6 +182,11 @@ func TestOrdinaryFailureCompatibility(t *testing.T) {
 
 func TestRedactionPreservesFailureContext(t *testing.T) {
 	for _, tc := range []struct{ raw, want string }{
+		{"failed to set cookie: permission denied", "failed to set cookie: permission denied"},
+		{"failed to set Set-Cookie: permission denied", "failed to set Set-Cookie: permission denied"},
+		{`failed to set "cookie": permission denied`, `failed to set "cookie": permission denied`},
+		{"request headers:\n  Cookie: abc123; upstream returned 403", "request headers:\n  Cookie: [REDACTED]; upstream returned 403"},
+		{`{"reason":"denied", "Cookie":"abc123"}`, `{"reason":"denied", "Cookie":"[REDACTED]"}`},
 		{"Cookie: abc123", "Cookie: [REDACTED]"},
 		{"Cookie: abc123; upstream returned 403", "Cookie: [REDACTED]; upstream returned 403"},
 		{"Set-Cookie: abc123 upstream returned 403", "Set-Cookie: [REDACTED] upstream returned 403"},
