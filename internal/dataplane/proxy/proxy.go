@@ -9,6 +9,7 @@ import (
 	"context"
 	"crypto/tls"
 	"fmt"
+	"github.com/TencentCloudAgentRuntime/ags-cli/internal/output"
 	"log"
 	"net"
 	"net/http"
@@ -164,6 +165,9 @@ func (p *Proxy) Start() (string, error) {
 	}
 	reverseProxy.ModifyResponse = func(response *http.Response) error {
 		p.captureAffinityResponse(response.Request.Context(), response.Header)
+		if response.StatusCode >= 400 {
+			p.logger.Printf("[ERROR] Proxy upstream response: %v", output.HTTPContext(context.Background(), "http_response", response.Request.URL.String(), 0, response))
+		}
 		return nil
 	}
 
@@ -171,7 +175,7 @@ func (p *Proxy) Start() (string, error) {
 	// to the client when verbose mode is enabled to avoid leaking internal
 	// host names or network topology to network-accessible clients.
 	reverseProxy.ErrorHandler = func(w http.ResponseWriter, r *http.Request, err error) {
-		p.logger.Printf("[ERROR] Proxy error: %v", err)
+		p.logger.Printf("[ERROR] Proxy error: %v: %v", output.HTTPContext(context.Background(), "http_request", "https://"+p.targetHost+r.URL.EscapedPath(), 0, nil), err)
 		w.WriteHeader(http.StatusBadGateway)
 		if p.options.Verbose {
 			fmt.Fprintf(w, "Bad Gateway: %v", err)
@@ -281,13 +285,20 @@ func (p *Proxy) handleWebSocket(w http.ResponseWriter, r *http.Request, upgrader
 		},
 	}
 
+	details := output.HTTPContext(p.ctx, "ws_handshake", upstreamURL, dialer.HandshakeTimeout, nil)
 	upstreamConn, upstreamResp, err := dialer.DialContext(p.ctx, upstreamURL, upstreamHeaders)
 	// Close the HTTP response body if present (dial failure with a non-101 HTTP response).
 	if upstreamResp != nil && upstreamResp.Body != nil {
 		defer func() { _ = upstreamResp.Body.Close() }()
 	}
 	if err != nil {
-		p.logger.Printf("[ERROR] WebSocket upstream dial failed: %v", err)
+		if upstreamResp != nil {
+			details["HTTPStatus"] = upstreamResp.StatusCode
+			if id := output.ResponseRequestID(upstreamResp.Header); id != "" {
+				details["RequestId"] = id
+			}
+		}
+		p.logger.Printf("[ERROR] WebSocket upstream dial failed: %v: %v", details, err)
 		// Only expose error details in verbose mode to avoid leaking internal
 		// host names or network topology to network-accessible clients.
 		errMsg := "Bad Gateway"

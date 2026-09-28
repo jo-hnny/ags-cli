@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 
+	"github.com/TencentCloudAgentRuntime/ags-cli/internal/client"
 	"github.com/TencentCloudAgentRuntime/ags-cli/internal/cloudapi"
 	"github.com/TencentCloudAgentRuntime/ags-cli/internal/config"
 )
@@ -31,6 +32,7 @@ func (c RawAPIClient) RawCall(ctx context.Context, action string, raw []byte) (*
 		return nil, err
 	}
 	cloudEndpoint := config.GetCloudEndpoint()
+	diagnose := client.CloudCallContext(ctx, action)
 	var (
 		respBody []byte
 		err      error
@@ -45,7 +47,7 @@ func (c RawAPIClient) RawCall(ctx context.Context, action string, raw []byte) (*
 		respBody, err = caller.Call(ctx, action, raw)
 	}
 	if err != nil {
-		return nil, fmt.Errorf("api call %s: %w", action, err)
+		return nil, diagnose(fmt.Errorf("api call %s: %w", action, err))
 	}
 
 	var parsed any

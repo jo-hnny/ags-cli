@@ -3,6 +3,7 @@ package proxy
 import (
 	"context"
 	"fmt"
+	"log"
 	"net"
 	"os/signal"
 	"strconv"
@@ -167,6 +168,7 @@ func runProxy(ctx context.Context, req command.Request, deps command.Deps, cp Co
 		}
 	}
 	proxy, err := runtime.NewProxy(dataplaneproxy.Options{
+		Logger:          log.New(cli.DiagnosticWriter(deps.IO.ErrOut), "", log.LstdFlags),
 		InstanceID:      deploymentID,
 		Domain:          domain,
 		RemotePort:      remotePort,

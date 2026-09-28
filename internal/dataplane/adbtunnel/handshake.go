@@ -6,10 +6,10 @@ import (
 	"fmt"
 	"net"
 	"net/http"
-	"net/url"
 	"strings"
 	"time"
 
+	"github.com/TencentCloudAgentRuntime/ags-cli/internal/output"
 	"github.com/gorilla/websocket"
 )
 
@@ -85,31 +85,5 @@ func (t *Tunnel) dialWebSocket(ctx context.Context, dialer *websocket.Dialer, bu
 	return nil, failure
 }
 
-func diagnosticEndpoint(raw string) string {
-	u, err := url.Parse(raw)
-	if err != nil {
-		return ""
-	}
-	u.User, u.RawQuery, u.Fragment, u.RawFragment, u.ForceQuery = nil, "", "", "", false
-	return u.String()
-}
-
-func responseRequestID(headers http.Header) string {
-	for _, name := range []string{"X-TC-RequestId", "X-Request-Id"} {
-		value := headers.Get(name)
-		if value == "" || len(value) > 256 {
-			continue
-		}
-		valid := true
-		for _, c := range value {
-			if c < '!' || c > '~' {
-				valid = false
-				break
-			}
-		}
-		if valid {
-			return value
-		}
-	}
-	return ""
-}
+func diagnosticEndpoint(raw string) string         { return output.DiagnosticEndpoint(raw) }
+func responseRequestID(headers http.Header) string { return output.ResponseRequestID(headers) }
