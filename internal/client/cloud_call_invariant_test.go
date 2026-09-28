@@ -5,30 +5,44 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"io/fs"
 	"os"
+	"reflect"
 	"strconv"
 	"strings"
 	"testing"
+	"testing/fstest"
+
+	ags "github.com/tencentcloud/tencentcloud-sdk-go/tencentcloud/ags/v20250920"
 )
 
-// These wrapper files must pass SDK method values directly to CallCloud. This
-// scans calls and method references, including anonymous functions, rather than
-// maintaining a list of Actions or relying on exported function names.
-func cloudCallViolations(source string) ([]string, error) {
+// Derive both context-aware and context-free Action names from the installed SDK.
+// Matching method references also catches aliases and receivers obtained in other
+// files, without requiring every caller to import or name the SDK client type.
+func cloudActionMethods() map[string]bool {
+	methods := map[string]bool{}
+	sdk := reflect.TypeFor[*ags.Client]()
+	for i := range sdk.NumMethod() {
+		method := sdk.Method(i)
+		if strings.HasSuffix(method.Name, "WithContext") && method.Type.NumIn() == 3 {
+			request := method.Type.In(2)
+			if request.Kind() == reflect.Pointer && request.Elem().PkgPath() == reflect.TypeFor[ags.Client]().PkgPath() {
+				methods[method.Name] = true
+				methods[strings.TrimSuffix(method.Name, "WithContext")] = true
+			}
+		}
+	}
+	return methods
+}
+
+func cloudCallViolations(source string, methods map[string]bool) ([]string, error) {
 	fset := token.NewFileSet()
 	file, err := parser.ParseFile(fset, "wrappers.go", source, 0)
 	if err != nil {
 		return nil, err
 	}
 	clientAlias := ""
-	sdkAlias := ""
 	for _, imp := range file.Imports {
-		if imp.Path.Value == `"github.com/tencentcloud/tencentcloud-sdk-go/tencentcloud/ags/v20250920"` {
-			sdkAlias = "v20250920"
-			if imp.Name != nil {
-				sdkAlias = imp.Name.Name
-			}
-		}
 		if imp.Path.Value == `"github.com/TencentCloudAgentRuntime/ags-cli/internal/client"` {
 			clientAlias = "client"
 			if imp.Name != nil {
@@ -36,29 +50,6 @@ func cloudCallViolations(source string) ([]string, error) {
 			}
 		}
 	}
-	// Also reject context-free methods on declared SDK parameters.
-	sdkNames := map[string]bool{}
-	ast.Inspect(file, func(node ast.Node) bool {
-		field, ok := node.(*ast.Field)
-		if !ok {
-			return true
-		}
-		pointer, ok := field.Type.(*ast.StarExpr)
-		if !ok {
-			return true
-		}
-		typ, ok := pointer.X.(*ast.SelectorExpr)
-		if !ok {
-			return true
-		}
-		pkg, ok := typ.X.(*ast.Ident)
-		if ok && pkg.Name == sdkAlias && typ.Sel.Name == "Client" {
-			for _, name := range field.Names {
-				sdkNames[name.Name] = true
-			}
-		}
-		return true
-	})
 	var violations []string
 	allowed := map[*ast.SelectorExpr]bool{}
 	ast.Inspect(file, func(node ast.Node) bool {
@@ -79,7 +70,7 @@ func cloudCallViolations(source string) ([]string, error) {
 			return true
 		}
 		method, ok := call.Args[3].(*ast.SelectorExpr)
-		if !ok || !strings.HasSuffix(method.Sel.Name, "WithContext") {
+		if !ok || !methods[method.Sel.Name] || !strings.HasSuffix(method.Sel.Name, "WithContext") {
 			violations = append(violations, "CallCloud requires a direct SDK method value")
 			return true
 		}
@@ -96,14 +87,62 @@ func cloudCallViolations(source string) ([]string, error) {
 		allowed[method] = true
 		return true
 	})
+	// Locally declared function fields are dependency-injection hooks, not SDK
+	// methods. Resolve the receiver object so this exemption cannot cover another
+	// variable with the same spelling (including a real SDK parameter).
+	hooks := map[string]map[string]bool{}
+	ast.Inspect(file, func(node ast.Node) bool {
+		spec, ok := node.(*ast.TypeSpec)
+		if !ok {
+			return true
+		}
+		structure, ok := spec.Type.(*ast.StructType)
+		if !ok {
+			return true
+		}
+		fields := map[string]bool{}
+		for _, field := range structure.Fields.List {
+			if _, ok := field.Type.(*ast.FuncType); ok {
+				for _, name := range field.Names {
+					fields[name.Name] = true
+				}
+			}
+		}
+		hooks[spec.Name.Name] = fields
+		return true
+	})
+	for _, decl := range file.Decls {
+		fn, ok := decl.(*ast.FuncDecl)
+		if !ok || fn.Recv == nil || fn.Body == nil {
+			continue
+		}
+		receiver := fn.Recv.List[0]
+		typ := receiver.Type
+		if ptr, ok := typ.(*ast.StarExpr); ok {
+			typ = ptr.X
+		}
+		name, ok := typ.(*ast.Ident)
+		if !ok || len(receiver.Names) != 1 {
+			continue
+		}
+		ast.Inspect(fn.Body, func(node ast.Node) bool {
+			selector, ok := node.(*ast.SelectorExpr)
+			if !ok {
+				return true
+			}
+			object, ok := selector.X.(*ast.Ident)
+			if ok && object.Obj != nil && object.Obj == receiver.Names[0].Obj && hooks[name.Name][selector.Sel.Name] {
+				allowed[selector] = true
+			}
+			return true
+		})
+	}
 	ast.Inspect(file, func(node ast.Node) bool {
 		method, ok := node.(*ast.SelectorExpr)
 		if !ok {
 			return true
 		}
-		receiver, _ := method.X.(*ast.Ident)
-		sdkMethod := receiver != nil && sdkNames[receiver.Name]
-		if (sdkMethod || strings.HasSuffix(method.Sel.Name, "WithContext")) && !allowed[method] {
+		if methods[method.Sel.Name] && !allowed[method] {
 			violations = append(violations, fmt.Sprintf("%s: %s bypasses CallCloud", fset.Position(method.Pos()), method.Sel.Name))
 		}
 		return true
@@ -118,7 +157,7 @@ func TestCloudWrappersUseCallCloud(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			violations, err := cloudCallViolations(string(source))
+			violations, err := cloudCallViolations(string(source), cloudActionMethods())
 			if err != nil || len(violations) > 0 {
 				t.Fatalf("%v: %v", err, violations)
 			}
@@ -143,7 +182,7 @@ func TestCloudWrappersUseCallCloud(t *testing.T) {
 			method := target.Args[3]
 			replacement := string(source[int(method.Pos())-1:int(method.End())-1]) + "(ctx, req)"
 			mutated := string(source[:start]) + replacement + string(source[end:])
-			violations, err = cloudCallViolations(mutated)
+			violations, err = cloudCallViolations(mutated, cloudActionMethods())
 			if err != nil || len(violations) == 0 {
 				t.Fatalf("removed helper escaped: %v %v", err, violations)
 			}
@@ -165,12 +204,15 @@ func TestCloudCallGuardRejectsNewBypasses(t *testing.T) {
 		{"context-free call", `func wrapper(api *ags.Client){ api.NewAction(req) }`, false},
 		{"new direct call", `func wrapper(){ sdk.NewActionWithContext(ctx,req) }`, false},
 		{"anonymous bypass", `var wrapper=func(){ sdk.NewActionWithContext(ctx,req) }`, false},
+		{"function hook", `type S struct{NewAction func()}; func(s *S) wrapper(){ s.NewAction() }`, true},
+		{"SDK with hook receiver name", `type S struct{NewAction func()}; func(s *S) wrapper(){ func(s *ags.Client){s.NewAction(req)}(sdk) }`, false},
+		{"unrelated context method", `func wrapper(){ http.NewRequestWithContext(ctx,"GET",url,nil) }`, true},
 		{"method alias", `func wrapper(){ call:=sdk.NewActionWithContext; call(ctx,req) }`, false},
 		{"wrong action", `func wrapper(){ client.CallCloud(ctx,"WrongAction",req,sdk.NewActionWithContext) }`, false},
 		{"hidden invocation", `func wrapper(){ client.CallCloud(ctx,"NewAction",req,func(){ sdk.NewActionWithContext(ctx,req) }) }`, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			violations, err := cloudCallViolations(prefix + tc.body)
+			violations, err := cloudCallViolations(prefix+tc.body, map[string]bool{"NewAction": true, "NewActionWithContext": true})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -178,5 +220,68 @@ func TestCloudCallGuardRejectsNewBypasses(t *testing.T) {
 				t.Fatalf("violations=%v valid=%v", violations, tc.valid)
 			}
 		})
+	}
+}
+
+// Scan source independently of build tags so a new platform/channel file is
+// checked even when it is not compiled by this test's build configuration.
+// tests/ and testdata contain test harnesses/fixtures, not shipped CLI code.
+func cloudSourceViolations(root fs.FS) ([]string, error) {
+	var violations []string
+	methods := cloudActionMethods()
+	err := fs.WalkDir(root, ".", func(path string, entry fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if entry.IsDir() {
+			if path != "." && (strings.HasPrefix(entry.Name(), ".") || entry.Name() == "vendor" || entry.Name() == "testdata" || path == "tests") {
+				return fs.SkipDir
+			}
+			return nil
+		}
+		if !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
+			return nil
+		}
+		source, err := fs.ReadFile(root, path)
+		if err != nil {
+			return err
+		}
+		found, err := cloudCallViolations(string(source), methods)
+		if err != nil {
+			return fmt.Errorf("%s: %w", path, err)
+		}
+		for _, finding := range found {
+			violations = append(violations, path+": "+finding)
+		}
+		return nil
+	})
+	return violations, err
+}
+
+func TestCloudCallsAcrossRepository(t *testing.T) {
+	violations, err := cloudSourceViolations(os.DirFS("../.."))
+	if err != nil || len(violations) > 0 {
+		t.Fatalf("%v: %v", err, violations)
+	}
+}
+
+func TestCloudGuardDiscoversThirdFile(t *testing.T) {
+	const safe = `package fixture
+ import "github.com/TencentCloudAgentRuntime/ags-cli/internal/client"
+ func call(){client.CallCloud(ctx,"CreateAPIKey",req,sdk.CreateAPIKeyWithContext)}`
+	files := fstest.MapFS{
+		"internal/cli/cloud_calls.go":  {Data: []byte(safe)},
+		"internal/controlplane/sdk.go": {Data: []byte(safe)},
+	}
+	if found, err := cloudSourceViolations(files); err != nil || len(found) != 0 {
+		t.Fatalf("baseline: %v %v", found, err)
+	}
+	for _, call := range []string{"sdk.CreateAPIKeyWithContext(ctx,req)", "sdk.CreateAPIKey(req)", "invoke := sdk.CreateAPIKeyWithContext; invoke(ctx,req)"} {
+		// The new file intentionally has no SDK import and is excluded from this OS's build.
+		files["cmd/newcommand/call_windows.go"] = &fstest.MapFile{Data: []byte("//go:build windows\n\npackage fixture\nfunc call(){" + call + "}")}
+		found, err := cloudSourceViolations(files)
+		if err != nil || len(found) != 1 || !strings.Contains(found[0], "cmd/newcommand/call_windows.go") {
+			t.Fatalf("new file escaped: %v %v", found, err)
+		}
 	}
 }
