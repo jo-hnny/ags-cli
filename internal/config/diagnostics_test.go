@@ -2,10 +2,11 @@ package config
 
 import (
 	"errors"
-	"github.com/TencentCloudAgentRuntime/ags-cli/internal/output"
 	"os"
 	"strings"
 	"testing"
+
+	"github.com/TencentCloudAgentRuntime/ags-cli/internal/output"
 )
 
 func TestConfigFailureContext(t *testing.T) {

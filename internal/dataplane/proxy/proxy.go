@@ -9,7 +9,6 @@ import (
 	"context"
 	"crypto/tls"
 	"fmt"
-	"github.com/TencentCloudAgentRuntime/ags-cli/internal/output"
 	"log"
 	"net"
 	"net/http"
@@ -19,6 +18,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/TencentCloudAgentRuntime/ags-cli/internal/output"
 	"github.com/gorilla/websocket"
 )
 

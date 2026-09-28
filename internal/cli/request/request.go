@@ -59,7 +59,7 @@ func ParseFlag(value string) (map[string]any, error) {
 	if err := DecodeJSON(data, &raw); err != nil {
 		return nil, output.NewUsageError("INVALID_REQUEST_JSON",
 			fmt.Sprintf("invalid JSON in --request: %v", err),
-			"Provide valid JSON as a string, @file, or - for stdin.").WithCause(output.WithContext(err, map[string]any{"Stage": "request_input", "Field": "request"}))
+			"Provide valid JSON as a string, @file, or - for stdin.").WithCause(output.WithContext(err, map[string]any{"Stage": "request_parse", "Field": "request"}))
 	}
 	result, ok := raw.(map[string]any)
 	if !ok {
@@ -94,7 +94,7 @@ func MergePositional(rawRequest, fieldName, positional string) ([]byte, error) {
 	if err := DecodeJSON(raw, &probe); err != nil {
 		return nil, output.NewUsageError("INVALID_REQUEST_JSON",
 			fmt.Sprintf("invalid JSON in --request: %v", err),
-			"Provide a valid JSON object as --request.").WithCause(output.WithContext(err, map[string]any{"Stage": "request_input", "Field": "request"}))
+			"Provide a valid JSON object as --request.").WithCause(output.WithContext(err, map[string]any{"Stage": "request_parse", "Field": "request"}))
 	}
 	if probe == nil {
 		return nil, output.NewUsageError("INVALID_REQUEST_JSON",

@@ -4,21 +4,21 @@
 package pty
 
 import (
+	"connectrpc.com/connect"
 	"context"
 	"encoding/base64"
 	"fmt"
-	"github.com/TencentCloudAgentRuntime/ags-cli/internal/output"
+	"golang.org/x/term"
 	"net/http"
 	"os"
 	"time"
 
-	"connectrpc.com/connect"
+	"github.com/TencentCloudAgentRuntime/ags-cli/internal/output"
 	"github.com/TencentCloudAgentRuntime/ags-go-sdk/connection"
 	"github.com/TencentCloudAgentRuntime/ags-go-sdk/constant"
 	"github.com/TencentCloudAgentRuntime/ags-go-sdk/pb/process"
 	"github.com/TencentCloudAgentRuntime/ags-go-sdk/pb/process/processconnect"
 	"github.com/TencentCloudAgentRuntime/ags-go-sdk/sandbox/core"
-	"golang.org/x/term"
 )
 
 const (

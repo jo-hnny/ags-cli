@@ -3,7 +3,6 @@ package proxy
 import (
 	"bytes"
 	"context"
-	"github.com/gorilla/websocket"
 	"io"
 	"log"
 	"net"
@@ -11,6 +10,8 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/gorilla/websocket"
 )
 
 func TestRejectedUpstreamDiagnostics(t *testing.T) {

@@ -3,11 +3,11 @@ package webshell
 import (
 	"context"
 	"fmt"
-	"github.com/TencentCloudAgentRuntime/ags-cli/internal/output"
 	"os"
 	"strings"
 	"time"
 
+	"github.com/TencentCloudAgentRuntime/ags-cli/internal/output"
 	"github.com/TencentCloudAgentRuntime/ags-go-sdk/connection"
 	"github.com/TencentCloudAgentRuntime/ags-go-sdk/constant"
 	"github.com/TencentCloudAgentRuntime/ags-go-sdk/sandbox/code"
@@ -64,7 +64,10 @@ func NewManagerWithToken(accessToken string, domain string) Manager {
 }
 
 // getSandbox connects to the sandbox instance using access token
-func (m *manager) getSandbox(ctx context.Context, instanceID string) (*code.Sandbox, error) {
+func (m *manager) getSandbox(ctx context.Context, instanceID string) (result *code.Sandbox, resultErr error) {
+	defer func() {
+		resultErr = output.WithContext(resultErr, map[string]any{"Stage": "remote_connect", "Operation": "webshell.connect", "InstanceId": instanceID})
+	}()
 	// Create connection config
 	connConfig := &connection.Config{
 		Domain:      m.domain,
@@ -141,7 +144,6 @@ fi
 `, ttydPort, ttydPort, ttydPort)
 
 	result, err = sandbox.Commands.Run(ctx, checkCmd, nil, nil)
-	err = output.WithContext(err, map[string]any{"Stage": "remote_execute", "Operation": "webshell.IsRunning", "InstanceId": instanceID})
 	if err != nil {
 		return false, nil // Process exists but can't check HTTP, assume not running properly
 	}
@@ -247,7 +249,7 @@ func (m *manager) Start(ctx context.Context, instanceID string, accessToken stri
 	_, err = sandbox.Commands.Start(ctx, ttydCmd, &command.ProcessConfig{
 		User: user,
 	}, nil)
-	err = output.WithContext(err, map[string]any{"Stage": "remote_execute", "Operation": "webshell.Start", "InstanceId": instanceID})
+	err = output.WithContext(err, map[string]any{"Stage": "remote_start", "Operation": "webshell.Start", "InstanceId": instanceID})
 	if err != nil {
 		return fmt.Errorf("failed to start ttyd: %w", err)
 	}
@@ -278,10 +280,11 @@ else
 fi
 `, ttydPort, ttydPort, ttydPort)
 
+	details := output.HTTPContext(ctx, "remote_ready", "", timeout, nil)
+	details["Operation"], details["InstanceId"] = "webshell.waitForService", instanceID
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
 		result, err := sandbox.Commands.Run(ctx, checkCmd, nil, nil)
-		err = output.WithContext(err, map[string]any{"Stage": "remote_execute", "Operation": "webshell.waitForService", "InstanceId": instanceID})
 		if err == nil {
 			httpCode := strings.TrimSpace(string(result.Stdout))
 			// 200 means ttyd is running (no auth), 401 means requires auth
@@ -292,12 +295,12 @@ fi
 
 		select {
 		case <-ctx.Done():
-			return ctx.Err()
+			return output.WithContext(ctx.Err(), details)
 		case <-time.After(500 * time.Millisecond):
 		}
 	}
 
-	return fmt.Errorf("ttyd service did not become ready within %v", timeout)
+	return output.WithContext(fmt.Errorf("ttyd service did not become ready within %v", timeout), details)
 }
 
 // Stop stops ttyd service in the specified instance
