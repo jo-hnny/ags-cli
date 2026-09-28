@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/base64"
 	"fmt"
+	"github.com/TencentCloudAgentRuntime/ags-cli/internal/output"
 	"net/http"
 	"os"
 	"time"
@@ -66,7 +67,11 @@ type sessionOutcome struct {
 // The second return value is non-nil only for transport-level failures, never
 // for a non-zero remote exit. Callers should propagate the exit code as the
 // CLI process exit code without rendering an error envelope.
-func (s *Session) Connect(ctx context.Context, instanceID, user string) (int, error) {
+func (s *Session) Connect(ctx context.Context, instanceID, user string) (exitCode int, resultErr error) {
+	stage := "local_terminal"
+	defer func() {
+		resultErr = output.WithContext(resultErr, map[string]any{"Stage": stage, "Operation": "pty", "InstanceId": instanceID})
+	}()
 	envdHost := s.envdHost(instanceID)
 
 	// Build the process RPC client that speaks to envd
@@ -106,6 +111,7 @@ func (s *Session) Connect(ctx context.Context, instanceID, user string) (int, er
 	cancelCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
+	stage = "remote_start"
 	stream, err := rpcClient.Start(cancelCtx, startReq)
 	if err != nil {
 		return 0, fmt.Errorf("failed to start PTY process: %w", err)
@@ -127,6 +133,7 @@ func (s *Session) Connect(ctx context.Context, instanceID, user string) (int, er
 		return 0, fmt.Errorf("first PTY event is not a start event")
 	}
 	pid := startEv.GetPid()
+	stage = "remote_stream"
 
 	// --- Goroutine: stream remote PTY output → local stdout ---
 	sessionDone := make(chan sessionOutcome, 1)

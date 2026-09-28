@@ -36,6 +36,10 @@ func TestNDJSONConnectionFailureRetainsCause(t *testing.T) {
 	if len(lines) != 2 {
 		t.Fatalf("stream=%s", stdout)
 	}
+	got := cli.ClassifyCLIError(result.Cause)
+	if got.Failure.Details["Stage"] != "remote_connect" || got.Failure.Details["InstanceId"] != "ins-test" {
+		t.Fatalf("missing connection context: %#v", got.Failure)
+	}
 	for i, line := range lines {
 		var event output.NDJSONEvent
 		if json.Unmarshal(line, &event) != nil || event.Type != []string{"started", "failed"}[i] {

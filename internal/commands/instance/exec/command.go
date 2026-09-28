@@ -120,6 +120,7 @@ func runExec(ctx context.Context, req cmdcore.Request, deps cmdcore.Deps) (*cmdc
 
 	if testDP := cli.TestDataPlane(); testDP != nil && !opts.Stream {
 		stdout, stderrText, exitCode, remoteErr, err := testDP.Exec(ctx, instanceID, remoteArgs)
+		err = output.WithContext(err, map[string]any{"Stage": "remote_execute", "Operation": "exec", "InstanceId": instanceID})
 		if err != nil {
 			resolved.CleanupForPreExecutionFailure()
 			return nil, err
@@ -156,6 +157,7 @@ func runExec(ctx context.Context, req cmdcore.Request, deps cmdcore.Deps) (*cmdc
 			OnStderr: func(data []byte) { fmt.Fprint(deps.IO.ErrOut, string(data)) },
 		}
 		result, err := sandbox.Commands.Run(ctx, cmdStr, procConfig, callbacks)
+		err = output.WithContext(err, map[string]any{"Stage": "remote_execute", "Operation": "exec", "InstanceId": instanceID})
 		if err != nil {
 			resolved.Cleanup(false)
 			return nil, fmt.Errorf("failed to execute command: %w", err)
@@ -165,6 +167,7 @@ func runExec(ctx context.Context, req cmdcore.Request, deps cmdcore.Deps) (*cmdc
 	}
 
 	result, err := sandbox.Commands.Run(ctx, cmdStr, procConfig, nil)
+	err = output.WithContext(err, map[string]any{"Stage": "remote_execute", "Operation": "exec", "InstanceId": instanceID})
 	if err != nil {
 		resolved.Cleanup(false)
 		return nil, fmt.Errorf("failed to execute command: %w", err)
@@ -234,6 +237,7 @@ func runExecStreamNDJSON(ctx context.Context, deps cmdcore.Deps, opts execOption
 		OnStderr: func(data []byte) { _ = nw.WriteStderr(string(data)) },
 	}
 	result, err := sandbox.Commands.Run(ctx, cmdStr, procConfig, callbacks)
+	err = output.WithContext(err, map[string]any{"Stage": "remote_execute", "Operation": "exec", "InstanceId": instanceID})
 	if err != nil {
 		cliErr := cli.ClassifyCLIError(err)
 		resolved.Cleanup(false)

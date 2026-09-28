@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"fmt"
+	"github.com/TencentCloudAgentRuntime/ags-cli/internal/output"
 
 	"github.com/TencentCloudAgentRuntime/ags-go-sdk/connection"
 	"github.com/TencentCloudAgentRuntime/ags-go-sdk/constant"
@@ -135,5 +136,6 @@ func connectSandboxDefault(ctx context.Context, instanceID string) (*code.Sandbo
 
 // ConnectSandboxWithCache connects to an existing sandbox using cached token.
 func ConnectSandboxWithCache(ctx context.Context, instanceID string) (*code.Sandbox, error) {
-	return connectSandbox(ctx, instanceID)
+	sandbox, err := connectSandbox(ctx, instanceID)
+	return sandbox, output.WithContext(err, map[string]any{"Stage": "remote_connect", "InstanceId": instanceID})
 }
