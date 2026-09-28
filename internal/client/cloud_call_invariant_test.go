@@ -35,9 +35,9 @@ func cloudActionMethods() map[string]bool {
 	return methods
 }
 
-func cloudCallViolations(source string, methods map[string]bool) ([]string, error) {
+func cloudCallViolations(filename, source string, methods map[string]bool) ([]string, error) {
 	fset := token.NewFileSet()
-	file, err := parser.ParseFile(fset, "wrappers.go", source, 0)
+	file, err := parser.ParseFile(fset, filename, source, 0)
 	if err != nil {
 		return nil, err
 	}
@@ -66,22 +66,22 @@ func cloudCallViolations(source string, methods map[string]bool) ([]string, erro
 			return true
 		}
 		if len(call.Args) != 4 {
-			violations = append(violations, "CallCloud must have four arguments")
+			violations = append(violations, fmt.Sprintf("%s: CallCloud must have four arguments", fset.Position(call.Pos())))
 			return true
 		}
 		method, ok := call.Args[3].(*ast.SelectorExpr)
 		if !ok || !methods[method.Sel.Name] || !strings.HasSuffix(method.Sel.Name, "WithContext") {
-			violations = append(violations, "CallCloud requires a direct SDK method value")
+			violations = append(violations, fmt.Sprintf("%s: CallCloud requires a direct SDK method value", fset.Position(call.Pos())))
 			return true
 		}
 		action, ok := call.Args[1].(*ast.BasicLit)
 		if !ok || action.Kind != token.STRING {
-			violations = append(violations, "CallCloud requires a literal Action")
+			violations = append(violations, fmt.Sprintf("%s: CallCloud requires a literal Action", fset.Position(call.Pos())))
 			return true
 		}
 		name, err := strconv.Unquote(action.Value)
 		if err != nil || name != strings.TrimSuffix(method.Sel.Name, "WithContext") {
-			violations = append(violations, "Action does not match SDK method")
+			violations = append(violations, fmt.Sprintf("%s: Action does not match SDK method", fset.Position(call.Pos())))
 			return true
 		}
 		allowed[method] = true
@@ -157,7 +157,7 @@ func TestCloudWrappersUseCallCloud(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			violations, err := cloudCallViolations(string(source), cloudActionMethods())
+			violations, err := cloudCallViolations(path, string(source), cloudActionMethods())
 			if err != nil || len(violations) > 0 {
 				t.Fatalf("%v: %v", err, violations)
 			}
@@ -182,7 +182,7 @@ func TestCloudWrappersUseCallCloud(t *testing.T) {
 			method := target.Args[3]
 			replacement := string(source[int(method.Pos())-1:int(method.End())-1]) + "(ctx, req)"
 			mutated := string(source[:start]) + replacement + string(source[end:])
-			violations, err = cloudCallViolations(mutated, cloudActionMethods())
+			violations, err = cloudCallViolations(path, mutated, cloudActionMethods())
 			if err != nil || len(violations) == 0 {
 				t.Fatalf("removed helper escaped: %v %v", err, violations)
 			}
@@ -212,7 +212,7 @@ func TestCloudCallGuardRejectsNewBypasses(t *testing.T) {
 		{"hidden invocation", `func wrapper(){ client.CallCloud(ctx,"NewAction",req,func(){ sdk.NewActionWithContext(ctx,req) }) }`, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			violations, err := cloudCallViolations(prefix+tc.body, map[string]bool{"NewAction": true, "NewActionWithContext": true})
+			violations, err := cloudCallViolations("fixture.go", prefix+tc.body, map[string]bool{"NewAction": true, "NewActionWithContext": true})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -246,13 +246,11 @@ func cloudSourceViolations(root fs.FS) ([]string, error) {
 		if err != nil {
 			return err
 		}
-		found, err := cloudCallViolations(string(source), methods)
+		found, err := cloudCallViolations(path, string(source), methods)
 		if err != nil {
-			return fmt.Errorf("%s: %w", path, err)
+			return err
 		}
-		for _, finding := range found {
-			violations = append(violations, path+": "+finding)
-		}
+		violations = append(violations, found...)
 		return nil
 	})
 	return violations, err
@@ -282,6 +280,19 @@ func TestCloudGuardDiscoversThirdFile(t *testing.T) {
 		found, err := cloudSourceViolations(files)
 		if err != nil || len(found) != 1 || !strings.Contains(found[0], "cmd/newcommand/call_windows.go") {
 			t.Fatalf("new file escaped: %v %v", found, err)
+		}
+	}
+}
+
+func TestCloudGuardDiagnosticLocation(t *testing.T) {
+	const path = "internal/zzprobe/probe_windows.go"
+	for _, tc := range []struct{ source, want string }{
+		{"package probe\nfunc probe(){ sdk.CreateAPIKeyWithContext(ctx, req) }", path + ":2:15: CreateAPIKeyWithContext bypasses CallCloud"},
+		{"package probe\nimport \"github.com/TencentCloudAgentRuntime/ags-cli/internal/client\"\nfunc probe(){ client.CallCloud(ctx, \"Wrong\", req, sdk.CreateAPIKeyWithContext) }", path + ":3:15: Action does not match SDK method"},
+	} {
+		found, err := cloudSourceViolations(fstest.MapFS{path: {Data: []byte(tc.source)}})
+		if err != nil || len(found) == 0 || found[0] != tc.want {
+			t.Fatalf("got %v, %v; want %s", found, err, tc.want)
 		}
 	}
 }
