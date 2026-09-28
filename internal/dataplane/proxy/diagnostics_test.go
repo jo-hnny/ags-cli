@@ -59,7 +59,11 @@ func TestRejectedUpstreamDiagnostics(t *testing.T) {
 						}
 					}
 					text := logs.String()
-					if !ws {
+					quiet := !ws && status < 500 && !verbose
+					if quiet && (strings.Contains(text, "[HTTP]") || strings.Contains(text, "[ERROR]")) {
+						t.Fatalf("non-verbose business response emitted request logs: %s", text)
+					}
+					if !ws && !quiet {
 						level := "HTTP"
 						if status >= 500 {
 							level = "ERROR"
@@ -76,8 +80,8 @@ func TestRejectedUpstreamDiagnostics(t *testing.T) {
 						if ws && want == "Endpoint:https://" {
 							want = "Endpoint:wss://"
 						}
-						if !strings.Contains(text, want) {
-							t.Fatalf("missing %s: %s", want, text)
+						if strings.Contains(text, want) == quiet {
+							t.Fatalf("unexpected diagnostic presence for %s (quiet=%v): %s", want, quiet, text)
 						}
 					}
 					for _, secret := range []string{"query-secret", "private-response-body", "private-header", "test-token"} {

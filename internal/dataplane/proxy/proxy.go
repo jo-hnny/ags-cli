@@ -165,7 +165,7 @@ func (p *Proxy) Start() (string, error) {
 	}
 	reverseProxy.ModifyResponse = func(response *http.Response) error {
 		p.captureAffinityResponse(response.Request.Context(), response.Header)
-		if response.StatusCode >= 400 {
+		if response.StatusCode >= 500 || (response.StatusCode >= 400 && p.options.Verbose) {
 			level := "HTTP"
 			if response.StatusCode >= 500 {
 				level = "ERROR"

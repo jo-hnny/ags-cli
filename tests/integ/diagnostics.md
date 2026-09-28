@@ -123,7 +123,8 @@ the helper and require the Action to match its SDK method. In-memory mutations
 remove a real helper invocation in each file; negative fixtures cover new direct
 calls, context-free calls, method aliases and mismatched Actions.
 
-HTTP proxy business responses (4xx) use `[HTTP]`; 5xx use `[ERROR]`. Both retain
+HTTP proxy business responses (4xx) use `[HTTP]` only in verbose mode; 5xx always
+use `[ERROR]`. Both retain
 observed status and allowlisted request IDs. Tests cover 401/404/503 with verbose
 on/off. WebSocket handshake rejection remains a connection failure with `[ERROR]`.
 
