@@ -87,6 +87,9 @@ func RegionFlag() string { return region }
 // DomainFlag returns the raw --domain value before config defaults are applied.
 func DomainFlag() string { return domain }
 
+// CloudEndpointFlag returns the raw --cloud-endpoint value from global flags.
+func CloudEndpointFlag() string { return cloudEndpoint }
+
 // SecretIDFlag returns the raw --secret-id value from global flags.
 func SecretIDFlag() string { return secretID }
 

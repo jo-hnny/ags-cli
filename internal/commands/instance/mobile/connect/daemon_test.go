@@ -84,6 +84,9 @@ func TestDaemonParent(t *testing.T) {
 		t.Fatal(err)
 	}
 	os.Args = []string{os.Args[0], "instance", "mobile", "connect", "ins-test", "-o", os.Getenv("AGR_TEST_DAEMON_OUTPUT"), "--secret-id", "test-secret-id", "--secret-key", "test-secret-key", "--token", "test-session-token"}
+	if endpoint := os.Getenv("AGR_TEST_ENDPOINT_FLAG"); endpoint != "" {
+		os.Args = append(os.Args, "--cloud-endpoint", endpoint)
+	}
 	if os.Getenv("AGR_TEST_DAEMON_DEBUG") == "1" {
 		os.Args = append(os.Args, "--debug")
 	}
@@ -138,6 +141,9 @@ func TestDaemonChild(t *testing.T) {
 		deps.DataPlane = tunnelcmd.RuntimeDeps{
 			ValidateConfig: func() error { return nil },
 			AcquireToken: func(context.Context, string) (string, error) {
+				if want := os.Getenv("AGR_TEST_EXPECT_ENDPOINT"); want != "" && config.GetCloudEndpoint() != want {
+					return "", fmt.Errorf("child endpoint = %q, want %q", config.GetCloudEndpoint(), want)
+				}
 				if mode == "classified" {
 					err := output.NewConflictError("CUSTOM_CHILD", "child classified failure", "child hint")
 					err.ExitCode = 7
@@ -287,6 +293,43 @@ func TestDaemonTextAndSuccessProcess(t *testing.T) {
 			parent, _, _ := strings.Cut(stderr.String(), "tunnel log tail:")
 			if strings.Count(parent, "Debug: error=") != 1 || !strings.Contains(stderr.String(), "Code: TUNNEL_AUTH_FAILED") || !strings.Contains(stderr.String(), "LogPath:") {
 				t.Fatalf("stderr=%s", stderr.String())
+			}
+		})
+	}
+}
+
+func TestDaemonEndpointProcess(t *testing.T) {
+	for _, tc := range []struct {
+		name, file, env, flag, want string
+	}{
+		{"default", "", "", "", "ags.tencentcloudapi.com"},
+		{"file", "file.example.test", "", "", "file.example.test"},
+		{"env_over_file", "file.example.test", "env.example.test", "", "env.example.test"},
+		{"flag", "", "", "flag.example.test", "flag.example.test"},
+		{"flag_over_file", "file.example.test", "", "flag.example.test", "flag.example.test"},
+		{"flag_over_env_and_file", "file.example.test", "env.example.test", "flag.example.test", "flag.example.test"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			home := t.TempDir()
+			if err := os.MkdirAll(filepath.Join(home, ".agr"), 0700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(home, ".agr", "config.toml"), []byte(fmt.Sprintf("cloud_endpoint = %q\n", tc.file)), 0600); err != nil {
+				t.Fatal(err)
+			}
+			ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
+			defer cancel()
+			cmd := exec.CommandContext(ctx, os.Args[0], "-test.run=^TestDaemonParent$")
+			cmd.Env = append(os.Environ(), "HOME="+home, "USERPROFILE="+home, "AGR_TEST_DAEMON_PARENT=1", "AGR_TEST_DAEMON_MODE=handshake", "AGR_TEST_DAEMON_OUTPUT=json", "AGR_TEST_DAEMON_DEBUG=1", "AGR_CLOUD_ENDPOINT="+tc.env, "AGR_TEST_ENDPOINT_FLAG="+tc.flag, "AGR_TEST_EXPECT_ENDPOINT="+tc.want)
+			var stdout, stderr bytes.Buffer
+			cmd.Stdout, cmd.Stderr = &stdout, &stderr
+			var exit *exec.ExitError
+			if err := cmd.Run(); !errors.As(err, &exit) || exit.ExitCode() != 4 {
+				t.Fatalf("exit=%v stdout=%s stderr=%s", err, &stdout, &stderr)
+			}
+			var envelope output.Envelope
+			if err := json.Unmarshal(stdout.Bytes(), &envelope); err != nil || envelope.Failure == nil || envelope.Failure.Code != "TUNNEL_AUTH_FAILED" {
+				t.Fatalf("unexpected result: %s (%v)", &stdout, err)
 			}
 		})
 	}
