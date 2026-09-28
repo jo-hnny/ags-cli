@@ -494,6 +494,14 @@ mobile tunnel 获取 token 失败时保留云 API 分类和 RequestId；超时�
 tunnel 日志记录在落盘前就会脱敏和限长，尾部日志显示前会再次脱敏。
 日志文件创建失败不改变原始错误分类，也不会返回不存在的日志路径。
 
+mobile WebSocket 握手诊断包含 `Endpoint`（不含用户信息、query 和 fragment）及
+`TimeoutMs`（实际生效的握手预算，不是已耗时）。探测预算为 10 秒，运行期连接为
+15 秒；更短的 context deadline 会缩短预算。DNS、连接和 TLS 失败仍统一记录为
+`websocket_handshake`，不推测内部网络阶段；没有收到响应则省略 HTTP 状态。
+请求 ID 仅依次读取 `X-TC-RequestId`、`X-Request-Id`，限制为不含空格的可打印 ASCII、
+最多 256 字节，不保留其他响应头和响应正文。启动探测、恢复探测和运行期连接失败
+均记录这些观察结果；启动失败还会跨后台就绪协议保留它们。token 获取失败保持独立分类。
+
 远端程序正常返回非零退出码时，保留已有输出和退出码语义。诊断增强不代表业务操作可安全重试。
 
 ```bash

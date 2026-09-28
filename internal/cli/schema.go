@@ -126,7 +126,9 @@ func schemaFn(cmd *cobra.Command, args []string) (*CmdResult, error) {
 		"GlobalFlags": globalFlagSchemas(cmd.Root()),
 		"FailureDetails": map[string]any{
 			"LogPath":    map[string]string{"Type": "string", "Description": "Tunnel log path on startup failure, only when the log file was successfully created."},
-			"TimeoutMs":  map[string]string{"Type": "integer", "Description": "Observed tunnel readiness wait budget in milliseconds when that budget expires."},
+			"TimeoutMs":  map[string]string{"Type": "integer", "Description": "Effective WebSocket handshake budget in milliseconds (not elapsed time), or tunnel readiness wait budget when that wait expires. A shorter context deadline reduces the handshake budget."},
+			"Endpoint":   map[string]string{"Type": "string", "Description": "Observed mobile WebSocket destination, without user information, query or fragment."},
+			"RequestId":  map[string]string{"Type": "string", "Description": "Server request identifier when available. Mobile WebSocket handshakes accept X-TC-RequestId, then X-Request-Id; only nonempty printable ASCII values without spaces, at most 256 bytes, are retained. Other response headers and bodies are omitted."},
 			"ExitCode":   map[string]string{"Type": "integer", "Description": "Observed child process exit code when it exits without a readiness message."},
 			"Stage":      map[string]string{"Type": "string", "Description": "Optional observed failure stage: websocket_handshake, start, exit, readiness_protocol, or readiness_wait for mobile tunnel failures."},
 			"HTTPStatus": map[string]string{"Type": "integer", "Description": "Optional HTTP status observed during a failed mobile tunnel WebSocket handshake, preserved across background readiness. HTTP 401/403 uses TUNNEL_AUTH_FAILED; other unclassified handshake failures use NETWORK_ERROR. Omitted when no response was received."},

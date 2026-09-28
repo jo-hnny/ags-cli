@@ -1,4 +1,4 @@
-# Error diagnostics coverage (Issue #138, steps 1 and 2)
+# Error diagnostics coverage (Issue #138, steps 1, 2 and mobile WebSocket boundary)
 
 The root `renderExecuteError` is the only error-chain printer. It prints before
 checking the already-written-output marker. The marker carries a cause but never
@@ -115,3 +115,19 @@ new CLI wrappers on their existing paths.
   and off: the old string-only message loses the expected auth failure/exit 4.
 
 No credentialed live cloud or real mobile-device verification is claimed here.
+
+## Stage 3: mobile WebSocket boundary
+
+Startup/recovery probes and runtime connections share handshake observation
+capture. Local HTTP rejection and delayed-response tests verify endpoint, effective
+budget, HTTP status and allowlisted request IDs. Injected DNS/refused-connection
+errors preserve causes without inventing response metadata. Parent/child process
+tests assert those details survive readiness forwarding. URL user info, queries,
+fragments, response bodies and non-allowlisted headers are not retained in the
+new metadata; unsafe or oversized request IDs are omitted.
+Running the new parent/child handshake assertions against the stage-2 handler
+and transport via a Go overlay fails with debug on and off because Endpoint,
+TimeoutMs and RequestId are missing.
+
+This slice does not complete the other HTTP clients, deployment proxy, local
+file/configuration or remote-execution boundaries planned in stage 3.
