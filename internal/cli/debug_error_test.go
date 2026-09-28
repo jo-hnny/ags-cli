@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/TencentCloudAgentRuntime/ags-cli/internal/command"
 	"github.com/TencentCloudAgentRuntime/ags-cli/internal/output"
@@ -157,5 +158,21 @@ func TestDiagnosticRedaction(t *testing.T) {
 	}
 	if f.Message != "test-secret" {
 		t.Fatal("original failure mutated")
+	}
+}
+
+func TestOrdinaryFailureCompatibility(t *testing.T) {
+	original := &output.Failure{Code: "CUSTOM", Kind: output.KindGenericError, Message: "无法打开配置文件 https://example.com/a%2fb?b=2&a=1", Hint: "Check the file permissions.", Details: map[string]any{"HTTPStatus": 502, "RequestId": "req-1"}}
+	before, _ := json.Marshal(original)
+	after, _ := json.Marshal(sanitizeFailure(original))
+	if !bytes.Equal(before, after) {
+		t.Fatalf("ordinary failure changed: %s -> %s", before, after)
+	}
+	for _, length := range []int{diagnosticLimit - 1, diagnosticLimit - 2} {
+		raw := strings.Repeat("x", length) + "错误"
+		clean := sanitizeFailure(&output.Failure{Message: raw}).Message
+		if !utf8.ValidString(clean) || !strings.HasSuffix(clean, " [truncated]") {
+			t.Fatalf("invalid truncation: %q", clean[length-1:])
+		}
 	}
 }

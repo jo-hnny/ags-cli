@@ -7,6 +7,7 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/TencentCloudAgentRuntime/ags-cli/internal/config"
 	"github.com/TencentCloudAgentRuntime/ags-cli/internal/output"
@@ -24,16 +25,18 @@ func redactDiagnostic(text string) string {
 		if err != nil {
 			return "[REDACTED URL]"
 		}
+		changed := false
 		if u.User != nil {
 			if _, ok := u.User.Password(); ok {
 				u.User = url.UserPassword(u.User.Username(), "REDACTED")
+				changed = true
 			}
 		}
 		query, err := url.ParseQuery(u.RawQuery)
 		if err != nil {
 			u.RawQuery = "REDACTED"
+			changed = true
 		} else {
-			changed := false
 			for key := range query {
 				if sensitiveDiagnosticKey(key) {
 					query.Set(key, "REDACTED")
@@ -43,6 +46,9 @@ func redactDiagnostic(text string) string {
 			if changed {
 				u.RawQuery = query.Encode()
 			}
+		}
+		if !changed {
+			return raw
 		}
 		return u.String()
 	})
@@ -57,7 +63,11 @@ func redactDiagnostic(text string) string {
 		}
 	}
 	if len(text) > diagnosticLimit {
-		text = text[:diagnosticLimit] + " [truncated]"
+		end := diagnosticLimit
+		for end > 0 && !utf8.RuneStart(text[end]) {
+			end--
+		}
+		text = text[:end] + " [truncated]"
 	}
 	return text
 }

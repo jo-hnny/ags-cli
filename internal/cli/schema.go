@@ -124,7 +124,7 @@ func schemaFn(cmd *cobra.Command, args []string) (*CmdResult, error) {
 		"Commands": catalog.Ordered, "ExitCodes": exitCodeTable(),
 		"FailureDetails": map[string]any{
 			"Stage":      map[string]string{"Type": "string", "Description": "Optional observed failure stage; websocket_handshake for a foreground mobile tunnel handshake failure."},
-			"HTTPStatus": map[string]string{"Type": "integer", "Description": "Optional HTTP status observed during a failed foreground mobile tunnel WebSocket handshake. Omitted when no response was received."},
+			"HTTPStatus": map[string]string{"Type": "integer", "Description": "Optional HTTP status observed during a failed foreground mobile tunnel WebSocket handshake. HTTP 401/403 uses TUNNEL_AUTH_FAILED; other unclassified handshake failures use NETWORK_ERROR. Omitted when no response was received."},
 		},
 	}
 	return OK(data, func(w io.Writer) {

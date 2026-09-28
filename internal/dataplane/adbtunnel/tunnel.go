@@ -215,7 +215,7 @@ func (t *Tunnel) Probe() error {
 
 	wsConn, response, err := dialer.DialContext(probeCtx, t.wsURL, headers)
 	if err != nil {
-		if probeCtx.Err() != nil {
+		if probeCtx.Err() != nil && !errors.Is(err, probeCtx.Err()) {
 			err = errors.Join(err, probeCtx.Err())
 		}
 		failure := &HandshakeError{Cause: err}
@@ -245,9 +245,9 @@ type HandshakeError struct {
 
 func (e *HandshakeError) Error() string {
 	if e.HTTPStatus != 0 {
-		return fmt.Sprintf("upstream WS handshake failed (HTTP %d): %v", e.HTTPStatus, e.Cause)
+		return fmt.Sprintf("upstream WS handshake failed (HTTP %d): %v", e.HTTPStatus, strings.ReplaceAll(fmt.Sprint(e.Cause), "\n", "; "))
 	}
-	return fmt.Sprintf("upstream WS handshake failed: %v", e.Cause)
+	return fmt.Sprintf("upstream WS handshake failed: %s", strings.ReplaceAll(fmt.Sprint(e.Cause), "\n", "; "))
 }
 
 func (e *HandshakeError) Unwrap() error { return e.Cause }

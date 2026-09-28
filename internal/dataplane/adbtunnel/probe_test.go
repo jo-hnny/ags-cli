@@ -40,7 +40,15 @@ func TestProbePreservesCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 	tunnel := &Tunnel{ctx: ctx, wsURL: "ws://127.0.0.1:1", options: TunnelOptions{TokenProvider: func() (string, error) { return "test", nil }}}
-	if err := tunnel.Probe(); !errors.Is(err, context.Canceled) {
+	if err := tunnel.Probe(); !errors.Is(err, context.Canceled) || strings.Contains(err.Error(), "\n") {
 		t.Fatalf("cancellation lost: %v", err)
+	}
+}
+
+func TestHandshakeTimeoutMessageIsSingleLine(t *testing.T) {
+	cause := errors.Join(errors.New("transport timeout"), context.DeadlineExceeded)
+	err := &HandshakeError{Cause: cause}
+	if strings.Contains(err.Error(), "\n") || !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("timeout=%v", err)
 	}
 }

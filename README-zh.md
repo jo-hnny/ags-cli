@@ -450,8 +450,14 @@ agr instance exec "$id" --stream -o ndjson -- tail -f app.log
 NDJSON 流仍只输出一次终止事件；未知错误在普通模式下仍显示 `INTERNAL_ERROR`。
 诊断写出前会处理当前生效的 SecretId/SecretKey/Token、Authorization/Cookie 请求头、
 URL 签名参数及 URL 密码，不生成堆栈转储或上传日志。
+普通 text 错误和 JSON/NDJSON 的 Failure 字段（含嵌套 Details）也会脱敏；
+Message、Hint、Fix 及 Details 中的字符串限制为 8 KiB 加截断标记，不切断 UTF-8 字符。
+限长以内且不含敏感内容的文本保持不变，输出结构不变。
 
 前台 mobile tunnel 获取 token 失败时保留云 API 分类和 RequestId；超时、取消保留各自分类。
+握手 HTTP 401/403 返回 `TUNNEL_AUTH_FAILED`（退出码 4）。本地端口占用返回
+`PORT_IN_USE`（退出码 2），可换端口或使用 `--port 0`；其他未分类 tunnel 操作
+返回 `TUNNEL_ERROR` 并保留已观察到的原因。
 其他 WebSocket 握手失败使用 `NETWORK_ERROR`（退出码 1），并按实际观察附带
 `Failure.Details.Stage=websocket_handshake` 和 `HTTPStatus`，没有 HTTP 响应则省略状态码。
 字段说明见 `agr schema -o json` 的 `Data.FailureDetails` 和 `agr explain NETWORK_ERROR`。

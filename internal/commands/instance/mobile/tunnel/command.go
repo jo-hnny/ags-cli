@@ -8,6 +8,7 @@ import (
 	"io"
 	"log"
 	"maps"
+	"net/http"
 	"os"
 	"os/signal"
 	"strconv"
@@ -138,13 +139,16 @@ func runTunnel(ctx context.Context, req command.Request, deps command.Deps, rt R
 	})
 	if err != nil {
 		writeReadyError(deps.IO.Out, daemon, fmt.Sprintf("failed to create tunnel: %v", err))
-		return nil, fmt.Errorf("failed to create tunnel: %w", err)
+		return nil, classifyTunnelError(fmt.Errorf("failed to create tunnel: %w", err))
 	}
 
 	addr, err := tunnel.Start()
 	if err != nil {
 		writeReadyError(deps.IO.Out, daemon, fmt.Sprintf("failed to start tunnel: %v", err))
-		return nil, fmt.Errorf("failed to start tunnel: %w", err)
+		if errors.Is(err, syscall.EADDRINUSE) {
+			return nil, output.NewUsageError("PORT_IN_USE", fmt.Sprintf("local port %d is already in use", port), "Choose another --port or use --port 0.").WithCause(err)
+		}
+		return nil, classifyTunnelError(fmt.Errorf("failed to start tunnel: %w", err))
 	}
 
 	if err := tunnel.Probe(); err != nil {
@@ -158,7 +162,7 @@ func runTunnel(ctx context.Context, req command.Request, deps command.Deps, rt R
 		msg := readyMessage{Status: "ready", Port: mustAtoi(portStr), PID: os.Getpid()}
 		if err := json.NewEncoder(deps.IO.Out).Encode(msg); err != nil {
 			tunnel.Stop()
-			return nil, fmt.Errorf("failed to write ready message: %w", err)
+			return nil, classifyTunnelError(fmt.Errorf("failed to write ready message: %w", err))
 		}
 	} else {
 		fmt.Fprintf(deps.IO.Out, "[Ready] ADB Tunnel established at %s\n", addr)
@@ -219,11 +223,22 @@ func mustAtoi(s string) int {
 	return n
 }
 
+func classifyTunnelError(err error) error {
+	classified := client.ClassifyError(err)
+	if classified.Failure.Code == "INTERNAL_ERROR" {
+		return output.NewCLIError(&output.Failure{Code: "TUNNEL_ERROR", Kind: output.KindGenericError, Message: err.Error(), Hint: "Inspect the reported tunnel operation; use --debug for the underlying cause."}).WithCause(err)
+	}
+	return classified
+}
+
 func classifyProbeError(err error) error {
 	classified := client.ClassifyError(err)
 	var handshake *adbtunnel.HandshakeError
 	if !errors.As(err, &handshake) {
-		return err
+		return classifyTunnelError(err)
+	}
+	if classified.Failure.Code == "INTERNAL_ERROR" && (handshake.HTTPStatus == http.StatusUnauthorized || handshake.HTTPStatus == http.StatusForbidden) {
+		classified = output.NewCLIError(&output.Failure{Code: "TUNNEL_AUTH_FAILED", Kind: output.KindAuthOrPermission, Message: err.Error(), Hint: "Check the tunnel access token and permissions, then reconnect."}).WithCause(err)
 	}
 	if classified.Failure.Code == "INTERNAL_ERROR" {
 		classified = output.NewCLIError(&output.Failure{

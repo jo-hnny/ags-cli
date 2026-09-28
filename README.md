@@ -485,8 +485,16 @@ SecretId/SecretKey/Token values, Authorization/Cookie headers, signed URL query
 parameters, and URL passwords before writing to stderr. No stack dump or upload
 is performed.
 
+Redaction also applies to ordinary text errors and JSON/NDJSON `Failure` fields,
+including nested `Details`. Message, hint, fix, and detail strings are capped at
+8 KiB plus a truncation marker without splitting UTF-8 characters. Non-sensitive
+content within that limit is preserved; output framing is unchanged.
+
 For foreground mobile tunnel failures, token acquisition retains cloud API
 classification and RequestId; timeouts and cancellations retain their own kinds.
+Handshake HTTP 401/403 uses `TUNNEL_AUTH_FAILED` (exit 4). A local port already
+in use returns `PORT_IN_USE` (exit 2); choose another port or `--port 0`. Other
+unclassified tunnel operations use `TUNNEL_ERROR` and retain the observed reason.
 Other WebSocket handshake failures use `NETWORK_ERROR` (exit 1), with optional
 `Failure.Details.Stage=websocket_handshake` and `HTTPStatus` when observed. These
 fields are described by `agr schema -o json` under `Data.FailureDetails` and by

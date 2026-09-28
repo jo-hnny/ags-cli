@@ -111,6 +111,24 @@ func explainCodeData(code string) (ExplainData, bool) {
 		base.Meaning = "A network operation failed. Mobile tunnel handshake failures may include Failure.Details.Stage=websocket_handshake and HTTPStatus when a response was received."
 		base.AffectedCommands = allCommandNames()
 		base.Fix = []string{"Check the endpoint, network, DNS, and access credentials.", "Use --debug for the observed cause. A retry may repeat a business operation; check its outcome first."}
+	case "PORT_IN_USE":
+		base.Kind = output.KindUsage
+		base.ExitCode = output.ExitUsage
+		base.Meaning = "The requested local tunnel port is already in use."
+		base.AffectedCommands = []string{"instance.mobile.tunnel"}
+		base.Fix = []string{"Choose another --port or use --port 0."}
+	case "TUNNEL_AUTH_FAILED":
+		base.Kind = output.KindAuthOrPermission
+		base.ExitCode = output.ExitAuthOrPermission
+		base.Meaning = "The tunnel WebSocket handshake received HTTP 401 or 403."
+		base.AffectedCommands = []string{"instance.mobile.tunnel"}
+		base.Fix = []string{"Check the tunnel access token and permissions, then reconnect."}
+	case "TUNNEL_ERROR":
+		base.Kind = output.KindGenericError
+		base.ExitCode = output.ExitGenericError
+		base.Meaning = "A local tunnel operation failed; the message retains the observed operation and reason."
+		base.AffectedCommands = []string{"instance.mobile.tunnel"}
+		base.Fix = []string{"Inspect the reported operation and use --debug for its underlying cause."}
 	case "USAGE":
 		base.Kind = output.KindUsage
 		base.ExitCode = output.ExitUsage
