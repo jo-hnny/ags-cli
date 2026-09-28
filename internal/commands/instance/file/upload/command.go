@@ -98,6 +98,7 @@ func runUpload(ctx context.Context, req command.Request, deps command.Deps) (*co
 	}
 	if testDP := cli.TestDataPlane(); testDP != nil {
 		path, size, err := testDP.Upload(ctx, instanceID, localPath, remotePath, reader)
+		err = output.WithContext(err, map[string]any{"Stage": "remote_execute", "Operation": "file.upload", "InstanceId": instanceID})
 		if err != nil {
 			return nil, err
 		}
@@ -110,6 +111,7 @@ func runUpload(ctx context.Context, req command.Request, deps command.Deps) (*co
 		return nil, fmt.Errorf("failed to connect to instance %s: %w", instanceID, err)
 	}
 	info, err := sandbox.Files.Write(ctx, remotePath, reader, &filesystem.WriteConfig{User: cli.ResolveUser(stringFlag(req, "user"))})
+	err = output.WithContext(err, map[string]any{"Stage": "remote_execute", "Operation": "file.upload", "InstanceId": instanceID})
 	if err != nil {
 		return nil, fmt.Errorf("failed to upload file: %w", err)
 	}

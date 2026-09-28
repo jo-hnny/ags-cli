@@ -93,6 +93,7 @@ func runDownload(ctx context.Context, req command.Request, deps command.Deps) (*
 	}
 	if testDP := cli.TestDataPlane(); testDP != nil {
 		reader, size, err := testDP.Download(ctx, instanceID, remotePath)
+		err = output.WithContext(err, map[string]any{"Stage": "remote_execute", "Operation": "file.download", "InstanceId": instanceID})
 		if err != nil {
 			return nil, err
 		}
@@ -104,6 +105,7 @@ func runDownload(ctx context.Context, req command.Request, deps command.Deps) (*
 		return nil, fmt.Errorf("failed to connect to instance %s: %w", instanceID, err)
 	}
 	reader, err := sandbox.Files.Read(ctx, remotePath, &filesystem.ReadConfig{User: cli.ResolveUser(stringFlag(req, "user"))})
+	err = output.WithContext(err, map[string]any{"Stage": "remote_execute", "Operation": "file.download", "InstanceId": instanceID})
 	if err != nil {
 		return nil, fmt.Errorf("failed to read remote file: %w", err)
 	}

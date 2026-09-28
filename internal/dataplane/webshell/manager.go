@@ -3,6 +3,7 @@ package webshell
 import (
 	"context"
 	"fmt"
+	"github.com/TencentCloudAgentRuntime/ags-cli/internal/output"
 	"os"
 	"strings"
 	"time"
@@ -117,6 +118,7 @@ func (m *manager) IsRunning(ctx context.Context, instanceID string) (bool, error
 
 	// Check if process exists
 	result, err := sandbox.Commands.Run(ctx, "pgrep -f 'ttyd.*--port 8080' >/dev/null && echo running || echo stopped", nil, nil)
+	err = output.WithContext(err, map[string]any{"Stage": "remote_execute", "Operation": "webshell.IsRunning", "InstanceId": instanceID})
 	if err != nil {
 		return false, fmt.Errorf("failed to check ttyd status: %w", err)
 	}
@@ -139,6 +141,7 @@ fi
 `, ttydPort, ttydPort, ttydPort)
 
 	result, err = sandbox.Commands.Run(ctx, checkCmd, nil, nil)
+	err = output.WithContext(err, map[string]any{"Stage": "remote_execute", "Operation": "webshell.IsRunning", "InstanceId": instanceID})
 	if err != nil {
 		return false, nil // Process exists but can't check HTTP, assume not running properly
 	}
@@ -157,6 +160,7 @@ func (m *manager) Download(ctx context.Context, instanceID string) error {
 
 	// Check if already downloaded
 	result, err := sandbox.Commands.Run(ctx, "test -x /tmp/ttyd && echo exists || echo missing", nil, nil)
+	err = output.WithContext(err, map[string]any{"Stage": "remote_execute", "Operation": "webshell.Download", "InstanceId": instanceID})
 	if err != nil {
 		return fmt.Errorf("failed to check ttyd binary: %w", err)
 	}
@@ -167,6 +171,7 @@ func (m *manager) Download(ctx context.Context, instanceID string) error {
 
 	// Get system architecture
 	result, err = sandbox.Commands.Run(ctx, "uname -m", nil, nil)
+	err = output.WithContext(err, map[string]any{"Stage": "remote_execute", "Operation": "webshell.Download", "InstanceId": instanceID})
 	if err != nil {
 		return fmt.Errorf("failed to get system architecture: %w", err)
 	}
@@ -203,6 +208,7 @@ chmod +x /tmp/ttyd
 `, downloadURL, downloadURL, downloadURL)
 
 	result, err = sandbox.Commands.Run(ctx, downloadCmd, nil, nil)
+	err = output.WithContext(err, map[string]any{"Stage": "remote_execute", "Operation": "webshell.Download", "InstanceId": instanceID})
 	if err != nil {
 		return fmt.Errorf("failed to download ttyd: %w", err)
 	}
@@ -241,6 +247,7 @@ func (m *manager) Start(ctx context.Context, instanceID string, accessToken stri
 	_, err = sandbox.Commands.Start(ctx, ttydCmd, &command.ProcessConfig{
 		User: user,
 	}, nil)
+	err = output.WithContext(err, map[string]any{"Stage": "remote_execute", "Operation": "webshell.Start", "InstanceId": instanceID})
 	if err != nil {
 		return fmt.Errorf("failed to start ttyd: %w", err)
 	}
@@ -274,6 +281,7 @@ fi
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
 		result, err := sandbox.Commands.Run(ctx, checkCmd, nil, nil)
+		err = output.WithContext(err, map[string]any{"Stage": "remote_execute", "Operation": "webshell.waitForService", "InstanceId": instanceID})
 		if err == nil {
 			httpCode := strings.TrimSpace(string(result.Stdout))
 			// 200 means ttyd is running (no auth), 401 means requires auth
@@ -300,6 +308,7 @@ func (m *manager) Stop(ctx context.Context, instanceID string) error {
 	}
 
 	_, err = sandbox.Commands.Run(ctx, "pkill -f 'ttyd.*--port 8080' 2>/dev/null || true", nil, nil)
+	err = output.WithContext(err, map[string]any{"Stage": "remote_execute", "Operation": "webshell.Stop", "InstanceId": instanceID})
 	if err != nil {
 		return fmt.Errorf("failed to stop ttyd: %w", err)
 	}
@@ -321,6 +330,7 @@ func (m *manager) UploadTTYD(ctx context.Context, instanceID string, ttydPath st
 
 	// Check if ttyd already exists and is valid
 	result, err := sandbox.Commands.Run(ctx, "test -x /tmp/ttyd && echo exists || echo missing", nil, nil)
+	err = output.WithContext(err, map[string]any{"Stage": "remote_execute", "Operation": "webshell.UploadTTYD", "InstanceId": instanceID})
 	if err != nil {
 		return fmt.Errorf("failed to check existing ttyd binary: %w", err)
 	}
@@ -338,12 +348,14 @@ func (m *manager) UploadTTYD(ctx context.Context, instanceID string, ttydPath st
 
 	// Upload ttyd binary to sandbox
 	_, err = sandbox.Files.Write(ctx, "/tmp/ttyd", file, nil)
+	err = output.WithContext(err, map[string]any{"Stage": "remote_execute", "Operation": "webshell.UploadTTYD", "InstanceId": instanceID})
 	if err != nil {
 		return fmt.Errorf("failed to upload ttyd binary: %w", err)
 	}
 
 	// Set executable permissions
 	result, err = sandbox.Commands.Run(ctx, "chmod +x /tmp/ttyd", nil, nil)
+	err = output.WithContext(err, map[string]any{"Stage": "remote_execute", "Operation": "webshell.UploadTTYD", "InstanceId": instanceID})
 	if err != nil {
 		return fmt.Errorf("failed to set ttyd executable permissions: %w", err)
 	}
