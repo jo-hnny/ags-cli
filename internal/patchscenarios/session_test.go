@@ -21,9 +21,21 @@ import (
 // The same registered scenario runs against the real candidate CLI here and
 // against the service in the strict patch runner. The local fixture is not live evidence.
 func TestSessionLifecycleCandidate(t *testing.T) {
+	for _, channel := range []string{"stable", "preview"} {
+		t.Run(channel, func(t *testing.T) { testSessionLifecycleCandidate(t, channel) })
+	}
+}
+
+func testSessionLifecycleCandidate(t *testing.T, channel string) {
 	root := filepath.Clean("../..")
-	binary := filepath.Join(t.TempDir(), "agr-preview")
-	build := exec.CommandContext(t.Context(), "go", "build", "-buildvcs=false", "-tags=preview", "-o", binary, "./cmd/agr")
+	binary := filepath.Join(t.TempDir(), "agr-"+channel)
+	args := []string{"build", "-buildvcs=false", "-o", binary}
+	if channel == "preview" {
+		args = append(args, "-tags=preview")
+	}
+	args = append(args, "./cmd/agr")
+	build := exec.CommandContext(t.Context(), "go", args...)
+	build.Env = append(os.Environ(), "GOFLAGS=")
 	build.Dir = root
 	if out, err := build.CombinedOutput(); err != nil {
 		t.Fatalf("build: %v\n%s", err, out)
@@ -79,8 +91,8 @@ func TestSessionLifecycleCandidate(t *testing.T) {
 			t.Fatalf("build stable: %v\n%s", err, out)
 		}
 		for _, group := range []string{"session", "session-space"} {
-			if out, err := exec.CommandContext(t.Context(), stable, group, "--help").CombinedOutput(); err == nil {
-				t.Fatalf("stable exposes %s: %s", group, out)
+			if out, err := exec.CommandContext(t.Context(), stable, group, "--help").CombinedOutput(); err != nil {
+				t.Fatalf("stable omits %s: %s", group, out)
 			}
 			if out, err := exec.CommandContext(t.Context(), binary, group, "--help").CombinedOutput(); err != nil {
 				t.Fatalf("preview omits %s: %v %s", group, err, out)
@@ -94,9 +106,9 @@ func TestSessionLifecycleCandidate(t *testing.T) {
 			if err != nil {
 				t.Fatalf("get contract: %v %s", err, out)
 			}
-			for _, unsupported := range []string{"num-recent-events", "after-timestamp", "NumRecentEvents", "AfterTimestamp"} {
-				if strings.Contains(string(out), unsupported) {
-					t.Fatalf("unsupported get parameter %s exposed: %s", unsupported, out)
+			for _, supported := range []string{"num-recent-events", "after-timestamp"} {
+				if !strings.Contains(string(out), supported) {
+					t.Fatalf("get parameter %s missing: %s", supported, out)
 				}
 			}
 		}

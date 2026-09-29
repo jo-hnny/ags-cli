@@ -1369,7 +1369,7 @@ func buildHandwrittenSchemas() []CommandSchema {
 				"ImageDigest":       {Type: "string", CliFlag: nil},
 				"ImageRegistryType": {Type: "enum", Values: []string{"enterprise", "personal", "custom"}, CliFlag: nil},
 			}},
-			Args:  []ArgSchema{{Name: "ImageDigest", Type: "string", Required: true}},
+			Args:  []ArgSchema{{Name: "ImageDigest", Type: "string"}},
 			Flags: []FlagSchema{{Name: "request", Type: "string"}, {Name: "generate-skeleton", Type: "bool"}},
 		},
 		{

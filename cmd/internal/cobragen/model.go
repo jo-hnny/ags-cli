@@ -209,7 +209,7 @@ func useForCommand(commandID string) string {
 	case "pre-cache-image-task.create":
 		return "create --image <image> --image-registry-type <type>"
 	case "pre-cache-image-task.get":
-		return "get <image-digest> --image <image> --image-registry-type <type>"
+		return "get [image-digest] [flags]"
 	case "deployment.get":
 		return "get <deployment-id>"
 	case "deployment.update":

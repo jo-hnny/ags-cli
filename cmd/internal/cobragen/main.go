@@ -455,7 +455,11 @@ func argSpecs(cmd commandModel) []argModel {
 		}
 		name := apimeta.KebabCase(field.Name)
 		desc := positionalDescription(name)
-		args = append(args, argModel{Name: name, Description: desc, Required: true})
+		required := true
+		if cmd.Command == "pre-cache-image-task.get" {
+			required = field.Required
+		}
+		args = append(args, argModel{Name: name, Description: desc, Required: required})
 	}
 	if strings.HasSuffix(cmd.Command, ".delete") && len(args) == 1 {
 		args[0].Repeatable = cmd.Command == "instance.delete" || cmd.Command == "tool.delete"

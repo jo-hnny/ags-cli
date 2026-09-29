@@ -68,10 +68,10 @@ func runSessionLifecycle(s *patchtest.Session) error {
 		request map[string]any
 	}{
 		{"session-space.get", map[string]any{}},
-		{"session.event.append", map[string]any{"SpaceId": "space-validation", "UserId": "user-validation", "SessionId": "session-validation", "Event": map[string]any{"Timestamp": "2026-09-01T00:00:00Z"}}},
+		{"session.event.append", map[string]any{"SpaceId": "space-validation", "UserId": "user-validation", "SessionId": "session-validation", "Event": map[string]any{"UnknownField": true}}},
 		{"session.list", map[string]any{"SpaceId": "space-validation", "Limit": "invalid"}},
-		{"session.get", map[string]any{"SpaceId": "space-validation", "UserId": "user-validation", "SessionId": "session-validation", "NumRecentEvents": 1}},
-		{"session.get", map[string]any{"SpaceId": "space-validation", "UserId": "user-validation", "SessionId": "session-validation", "AfterTimestamp": "2026-09-01T00:00:00Z"}},
+		{"session.get", map[string]any{"SpaceId": "space-validation", "UserId": "user-validation", "SessionId": "session-validation", "NumRecentEvents": "invalid"}},
+		{"session.get", map[string]any{"SpaceId": "space-validation", "UserId": "user-validation", "SessionId": "session-validation", "AfterTimestamp": 123}},
 		{"session.get", map[string]any{"SpaceId": "space-validation", "UserId": "user-validation", "SessionId": "session-validation", "AgentId": "disabled"}},
 	} {
 		result, err := sessionCall(s, ctx, invalid.command, invalid.request)
