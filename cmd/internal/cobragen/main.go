@@ -42,15 +42,16 @@ type commandModel struct {
 }
 
 type fieldModel struct {
-	AllowEmpty bool
-	Name       string
-	Type       string
-	Member     string
-	Required   bool
-	Parser     string
-	Positional bool
-	Excluded   bool
-	Inputs     []inputModel
+	AllowEmpty         bool
+	Name               string
+	Type               string
+	Member             string
+	Required           bool
+	Parser             string
+	Positional         bool
+	OptionalPositional bool
+	Excluded           bool
+	Inputs             []inputModel
 }
 
 type inputModel struct {
@@ -258,14 +259,15 @@ func buildCommands(spec *apimeta.Spec, mapping *apimeta.Mapping, help *apimeta.H
 				fm := a.Fields[m.Name]
 				parser := parserForField(m, fm)
 				field := fieldModel{
-					Name:       m.Name,
-					Type:       m.Type,
-					Member:     m.Member,
-					Required:   m.Required && (fm == nil || !fm.Excluded),
-					AllowEmpty: fm != nil && fm.AllowEmpty,
-					Parser:     parser,
-					Positional: fm != nil && fm.Positional,
-					Excluded:   fm != nil && fm.Excluded,
+					Name:               m.Name,
+					Type:               m.Type,
+					Member:             m.Member,
+					Required:           m.Required && (fm == nil || !fm.Excluded),
+					AllowEmpty:         fm != nil && fm.AllowEmpty,
+					Parser:             parser,
+					Positional:         fm != nil && fm.Positional,
+					OptionalPositional: fm != nil && fm.OptionalPositional,
+					Excluded:           fm != nil && fm.Excluded,
 				}
 				for _, in := range inputsFor(m, fm) {
 					if field.Excluded {
@@ -455,10 +457,7 @@ func argSpecs(cmd commandModel) []argModel {
 		}
 		name := apimeta.KebabCase(field.Name)
 		desc := positionalDescription(name)
-		required := true
-		if cmd.Command == "pre-cache-image-task.get" {
-			required = field.Required
-		}
+		required := !field.OptionalPositional
 		args = append(args, argModel{Name: name, Description: desc, Required: required})
 	}
 	if strings.HasSuffix(cmd.Command, ".delete") && len(args) == 1 {

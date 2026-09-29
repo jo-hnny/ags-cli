@@ -353,6 +353,7 @@ actions:
     fields:
       ImageDigest:
         positional: true
+        optional_positional: true
 
   ApproveRegistryRecord:
     command: registry.record.approve

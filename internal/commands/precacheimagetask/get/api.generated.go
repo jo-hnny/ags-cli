@@ -38,14 +38,14 @@ func APIDescriptor() apicli.APIDescriptor {
 				Name:   "Image",
 				Parser: "common.default_string",
 				Inputs: []apicli.InputSpec{
-					{Name: "image", Flag: "image", Usage: "Image. Required as part of the image triple when no task ID is supplied.", Type: command.FlagString},
+					{Name: "image", Flag: "image", Usage: "Image reference: repository:tag, repository@sha256:<64-digit digest>, or repository:tag@sha256:<64-digit digest>. Required as part of the image triple when no task ID is supplied.", Type: command.FlagString},
 				},
 			},
 			{
 				Name:   "ImageRegistryType",
 				Parser: "common.default_string",
 				Inputs: []apicli.InputSpec{
-					{Name: "image-registry-type", Flag: "image-registry-type", Usage: "ImageRegistryType. Required as part of the image triple when no task ID is supplied.", Type: command.FlagString},
+					{Name: "image-registry-type", Flag: "image-registry-type", Usage: "Image registry type: enterprise, personal, or custom. Required as part of the image triple when no task ID is supplied.", Type: command.FlagString},
 				},
 			},
 			{

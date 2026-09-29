@@ -25,7 +25,7 @@ and response shapes are now populated; the empty-shape warning in the original
   is not used as evidence of wire compatibility.
 - Pre-cache get accepts a task ID alone. The old digest positional argument and
   image triple remain available; digest is now optional at the CLI argument layer.
-  The service validates the ID-or-triple combination. Create/get JSON responses
+  The CLI rejects missing, incomplete, empty, or mixed ID/triple selectors locally for both flags and JSON requests. Create/get JSON responses
   preserve task IDs and all newly published fields, including large byte counts.
 
 ## Local verification

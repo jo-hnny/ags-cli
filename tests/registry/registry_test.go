@@ -180,7 +180,6 @@ func testRegistryChannel(t *testing.T, channel string) {
 			if !same {
 				t.Fatal("dedicated flags changed the request")
 			}
-
 		})
 	}
 	if count != 19 {

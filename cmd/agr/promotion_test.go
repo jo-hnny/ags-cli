@@ -4,12 +4,14 @@ import (
 	"bytes"
 	"encoding/json"
 	"encoding/pem"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/TencentCloudAgentRuntime/ags-cli/internal/apimeta"
@@ -155,6 +157,106 @@ func TestPromotedRequestCoverage(t *testing.T) {
 			for name := range schema.RequestSchema {
 				if !members[name] {
 					t.Errorf("schema contains noncanonical field %s", name)
+				}
+			}
+		})
+	}
+}
+
+func TestPrecacheInvalidSelector(t *testing.T) {
+	var calls atomic.Int64
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		_, _ = w.Write([]byte(`{"Response":{"RequestId":"unexpected"}}`))
+	}))
+	defer server.Close()
+	cert := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: server.Certificate().Raw})
+	cases := []struct {
+		name    string
+		args    []string
+		request string
+	}{
+		{"missing", nil, `{}`},
+		{"digest only", []string{"sha256:x"}, `{"ImageDigest":"sha256:x"}`},
+		{"image only", []string{"--image", "a"}, `{"Image":"a"}`},
+		{"type only", []string{"--image-registry-type", "personal"}, `{"ImageRegistryType":"personal"}`},
+		{"missing type", []string{"sha256:x", "--image", "a"}, `{"ImageDigest":"sha256:x","Image":"a"}`},
+		{"missing image", []string{"sha256:x", "--image-registry-type", "personal"}, `{"ImageDigest":"sha256:x","ImageRegistryType":"personal"}`},
+		{"missing digest", []string{"--image", "a", "--image-registry-type", "personal"}, `{"Image":"a","ImageRegistryType":"personal"}`},
+		{"mixed", []string{"sha256:x", "--image", "a", "--image-registry-type", "personal", "--pre-cache-image-id", "c"}, `{"PreCacheImageId":"c","Image":"a","ImageDigest":"sha256:x","ImageRegistryType":"personal"}`},
+		{"mixed partial", []string{"--pre-cache-image-id", "c", "--image", "a"}, `{"PreCacheImageId":"c","Image":"a"}`},
+		{"empty ID", []string{"--pre-cache-image-id", ""}, `{"PreCacheImageId":""}`},
+		{"blank ID", []string{"--pre-cache-image-id", " "}, `{"PreCacheImageId":" "}`},
+		{"empty image", []string{"sha256:x", "--image", "", "--image-registry-type", "personal"}, `{"Image":"","ImageDigest":"sha256:x","ImageRegistryType":"personal"}`},
+		{"null ID", nil, `{"PreCacheImageId":null}`},
+		{"null triple", nil, `{"Image":null,"ImageDigest":"sha256:x","ImageRegistryType":"personal"}`},
+		{"mixed null", nil, `{"PreCacheImageId":"c","Image":null}`},
+	}
+	for _, tc := range cases {
+		for _, transport := range []string{"flags", "inline", "file", "stdin"} {
+			if transport == "flags" && strings.Contains(tc.name, "null") {
+				continue
+			}
+			t.Run(tc.name+"/"+transport, func(t *testing.T) {
+				args := []string{"pre-cache-image-task", "get"}
+				stdin := ""
+				switch transport {
+				case "flags":
+					args = append(args, tc.args...)
+				case "inline":
+					args = append(args, "--request", tc.request)
+				case "file":
+					path := filepath.Join(t.TempDir(), "request.json")
+					if err := os.WriteFile(path, []byte(tc.request), 0600); err != nil {
+						t.Fatal(err)
+					}
+					args = append(args, "--request", "@"+path)
+				case "stdin":
+					args = append(args, "--request", "-")
+					stdin = tc.request
+				}
+				args = append(args, "-o", "json")
+				cmd := exec.CommandContext(t.Context(), os.Args[0], append([]string{"-test.run=^TestTransportLifecycleHelper$", "--"}, args...)...)
+				home := t.TempDir()
+				cmd.Env = []string{"HOME=" + home, "USERPROFILE=" + home, "PATH=" + os.Getenv("PATH"), "AGR_TRANSPORT_LIFECYCLE_HELPER=success", "GORACE=atexit_sleep_ms=0", "TENCENTCLOUD_SECRET_ID=fake", "TENCENTCLOUD_SECRET_KEY=fake", "AGR_REGION=ap-guangzhou", "AGR_CLOUD_ENDPOINT=" + strings.TrimPrefix(server.URL, "https://"), "AGR_TRANSPORT_TEST_CERT=" + string(cert)}
+				cmd.Stdin = strings.NewReader(stdin)
+				before := calls.Load()
+				out, err := cmd.Output()
+				var exit *exec.ExitError
+				if !errors.As(err, &exit) || exit.ExitCode() != 2 {
+					t.Fatalf("exit=%v stdout=%s", err, out)
+				}
+				var envelope struct {
+					Failure struct {
+						Kind string
+						Code string
+					}
+				}
+				if err := json.Unmarshal(out, &envelope); err != nil {
+					t.Fatal(err)
+				}
+				if envelope.Failure.Kind != "usage" {
+					t.Fatalf("failure=%+v", envelope.Failure)
+				}
+				if calls.Load() != before {
+					t.Fatal("invalid selector sent a network request")
+				}
+			})
+		}
+	}
+}
+
+func TestPrecacheHelpSelectorFormats(t *testing.T) {
+	for _, id := range []string{"pre-cache-image-task.create", "pre-cache-image-task.get"} {
+		t.Run(id, func(t *testing.T) {
+			cmd, ok := findCobraCommand(contractRoot(), id)
+			if !ok {
+				t.Fatal("missing command")
+			}
+			help := commandHelp(t, cmd)
+			for _, value := range []string{"enterprise", "personal", "custom", "repository:tag", "repository@sha256:", "repository:tag@sha256:"} {
+				if !strings.Contains(help, value) {
+					t.Errorf("help missing %q", value)
 				}
 			}
 		})

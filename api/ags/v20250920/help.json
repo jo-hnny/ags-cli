@@ -784,10 +784,10 @@
             "short": "Describe an image pre-cache task",
             "fields": {
                 "Image": {
-                    "description": "Image. Required as part of the image triple when no task ID is supplied.",
+                    "description": "Image reference: repository:tag, repository@sha256:<64-digit digest>, or repository:tag@sha256:<64-digit digest>. Required as part of the image triple when no task ID is supplied.",
                     "inputs": {
                         "image": {
-                            "usage": "Image. Required as part of the image triple when no task ID is supplied."
+                            "usage": "Image reference: repository:tag, repository@sha256:<64-digit digest>, or repository:tag@sha256:<64-digit digest>. Required as part of the image triple when no task ID is supplied."
                         }
                     }
                 },
@@ -800,10 +800,10 @@
                     }
                 },
                 "ImageRegistryType": {
-                    "description": "ImageRegistryType. Required as part of the image triple when no task ID is supplied.",
+                    "description": "Image registry type: enterprise, personal, or custom. Required as part of the image triple when no task ID is supplied.",
                     "inputs": {
                         "image-registry-type": {
-                            "usage": "ImageRegistryType. Required as part of the image triple when no task ID is supplied."
+                            "usage": "Image registry type: enterprise, personal, or custom. Required as part of the image triple when no task ID is supplied."
                         }
                     }
                 },
