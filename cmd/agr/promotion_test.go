@@ -10,11 +10,13 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"testing"
 
 	"github.com/TencentCloudAgentRuntime/ags-cli/internal/apimeta"
+	"github.com/TencentCloudAgentRuntime/ags-cli/internal/cli"
 )
 
 // Exercise the real CLI, signed dynamic transport and JSON envelope. The old
@@ -164,6 +166,8 @@ func TestPromotedRequestCoverage(t *testing.T) {
 }
 
 func TestPrecacheInvalidSelector(t *testing.T) {
+	schema := schemaForCommand(t, "pre-cache-image-task.get")
+	explanations := map[string]cli.ExplainData{}
 	var calls atomic.Int64
 	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		calls.Add(1)
@@ -237,6 +241,35 @@ func TestPrecacheInvalidSelector(t *testing.T) {
 				}
 				if envelope.Failure.Kind != "usage" {
 					t.Fatalf("failure=%+v", envelope.Failure)
+				}
+				code := envelope.Failure.Code
+				if !slices.Contains(schema.Failures, code) {
+					t.Errorf("runtime error %s is absent from schema Failures", code)
+				}
+				explanation, known := explanations[code]
+				if !known {
+					output, err := runAGR(t, "explain", code, "-o", "json")
+					if err != nil {
+						t.Fatalf("explain %s: %v", code, err)
+					}
+					var result struct{ Data cli.ExplainData }
+					if err := json.Unmarshal([]byte(output), &result); err != nil {
+						t.Fatal(err)
+					}
+					explanation = result.Data
+					explanations[code] = explanation
+				}
+				if explanation.Kind != envelope.Failure.Kind || explanation.ExitCode != exit.ExitCode() {
+					t.Errorf("explain %s disagrees with runtime: %+v", code, explanation)
+				}
+				if !slices.Contains(explanation.AffectedCommands, schema.Name) {
+					t.Errorf("explain %s omits affected command %s", code, schema.Name)
+				}
+				if !strings.Contains(strings.Join(explanation.Fix, " "), "pre-cache-image-task get") {
+					t.Errorf("explain %s lacks applicable selector advice: %v", code, explanation.Fix)
+				}
+				if code == "CONFLICTING_INPUTS" && (!slices.Contains(explanation.AffectedCommands, "instance.code.run") || !strings.Contains(strings.Join(explanation.Fix, " "), "-c/--code")) {
+					t.Errorf("shared conflict explanation lost code input guidance: %+v", explanation)
 				}
 				if calls.Load() != before {
 					t.Fatal("invalid selector sent a network request")

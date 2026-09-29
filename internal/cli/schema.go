@@ -1360,6 +1360,7 @@ func buildHandwrittenSchemas() []CommandSchema {
 		},
 		{
 			Name: "pre-cache-image-task.get", Summary: "Describe an image pre-cache task",
+			Failures: []string{"MISSING_REQUIRED_INPUT", "CONFLICTING_INPUTS"},
 			Mutation: false, CreatesResource: false,
 			Idempotency: "none", SupportsDryRun: false, Interactive: false,
 			RequiresAuth: true, SupportsJson: true, SupportsNdjson: false, SupportsJq: true,
