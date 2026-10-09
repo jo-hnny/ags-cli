@@ -19,27 +19,41 @@ var diagnosticURL = regexp.MustCompile(`[a-zA-Z][a-zA-Z0-9+.-]*://[^\s<>"']+`)
 
 // Header values end at a semicolon in inline diagnostics; do not consume the
 // following operation/status text. Cookie pairs are handled separately.
-// A quoted value without its closing quote (for example, cut by truncation)
-// extends to the end of its line, never into the next line.
-var diagnosticHeader = regexp.MustCompile(`(?im)(\b(?:authorization|proxy-authorization)["']?\s*[:=]\s*["']?)(?:(?:Bearer|Basic)\s+(?:"[^"\r\n]*"?|'[^'\r\n]*'?|[^\s;,"']+)|(?:[^;\r\n"']+|"[^"\r\n]*"?|'[^'\r\n]*'?)+)`)
+// A quoted value ends at its matching closing quote; without one (for example,
+// cut by truncation) it extends to the end of its line, never into the next.
+var diagnosticHeader = regexp.MustCompile(`(?im)(\b(?:authorization|proxy-authorization)["']?\s*[:=]\s*(?:\[\s*)?)(?:"((?:[^"\\\r\n]|\\.)*)|'([^'\r\n]*)|((?:Bearer|Basic)\s+(?:"[^"\r\n]*"?|'[^'\r\n]*'?|[^\s;,"'\]]+)|(?:[^;\r\n"']+|"[^"\r\n]*"?|'[^'\r\n]*'?)+))`)
 var diagnosticAuthScheme = regexp.MustCompile(`(?i)^(?:Bearer|Basic|Digest|Negotiate|NTLM|(?:AWS4|TC3)-HMAC-SHA256)\s+`)
-var diagnosticCookie = regexp.MustCompile(`(?i)\b(cookie|set-cookie)["']?\s*[:=]\s*["']?`)
+var diagnosticCookie = regexp.MustCompile(`(?i)\b(cookie|set-cookie)["']?\s*[:=]\s*(?:\[\s*)?["']?`)
+
+// JSON header values (strings or arrays, such as a marshaled http.Header) are
+// replaced literal by literal so escaped quotes cannot end a value early.
+var diagnosticJSONHeader = regexp.MustCompile(`(?i)("(?:authorization|proxy-authorization|cookie|set-cookie)"\s*:\s*)(\[\s*(?:"(?:[^"\\\r\n]|\\.)*"?\s*,?\s*)*\]?|"(?:[^"\\\r\n]|\\.)*"?)`)
+var diagnosticJSONString = regexp.MustCompile(`"(?:[^"\\\r\n]|\\.)*"?`)
 
 // Unquoted cookie values may contain single quotes and commas (RFC 6265 allows
 // any octet except controls, whitespace, DQUOTE, semicolon and backslash).
-var diagnosticCookiePair = regexp.MustCompile(`^(\s*[^=\s;"']+\s*=\s*)("[^"\r\n]*"?|[^;\s"]+)(;\s*)?`)
+// Quoted values may appear with escaped quotes inside a quoted string.
+var diagnosticCookiePair = regexp.MustCompile(`^(\s*[^=\s;"']+\s*=\s*)(\\?"[^"\\\r\n]*(?:\\?")?|[^;\s"]+)(;\s*)?`)
 var diagnosticQuery = regexp.MustCompile(`([?&;])([^=&#;]+)=([^&#;]*)`)
 
 // Normal failures redact sensitive values without imposing a diagnostic limit.
 func redactSensitive(text string) string {
 	text = diagnosticURL.ReplaceAllStringFunc(text, redactURL)
+	text = diagnosticJSONHeader.ReplaceAllStringFunc(text, func(field string) string {
+		match := diagnosticJSONHeader.FindStringSubmatchIndex(field)
+		return field[:match[4]] + diagnosticJSONString.ReplaceAllString(field[match[4]:], `"[REDACTED]"`)
+	})
 	// Explicit credential schemes can occur inline. Other values need a header
 	// boundary so prose such as "failed to set authorization: denied" survives.
 	headers := diagnosticHeader.FindAllStringSubmatchIndex(text, -1)
 	for i := len(headers) - 1; i >= 0; i-- {
 		match := headers[i]
-		if isDiagnosticHeaderStart(text, match[0]) || diagnosticAuthScheme.MatchString(text[match[3]:match[1]]) {
-			text = text[:match[3]] + "[REDACTED]" + text[match[1]:]
+		start, end := match[4], match[5]
+		for group := 3; start < 0 && group <= 4; group++ {
+			start, end = match[2*group], match[2*group+1]
+		}
+		if isDiagnosticHeaderStart(text, match[0]) || diagnosticAuthScheme.MatchString(text[start:end]) {
+			text = text[:start] + "[REDACTED]" + text[end:]
 		}
 	}
 	// Work backwards so replacing cookie values does not invalidate offsets.

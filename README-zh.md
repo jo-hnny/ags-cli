@@ -471,6 +471,7 @@ URL 签名参数及 URL 密码，不生成堆栈转储或上传日志。
 头部脱敏保留周围状态文字，URL 只替换密码和敏感 query 值；其他参数转义损坏时也不整段隐藏。
 Details 中通用的 token/signature/sig 字段不再仅凭名字隐藏；已知凭据值及明确的凭据/头部字段仍会脱敏。
 裸 Cookie 值仅在头部行首或带引号的对象字段中隐藏，保留 `failed to set cookie: permission denied` 等普通文字。
+JSON 中（如序列化后的请求头映射）Authorization/Cookie 字段的每个字符串（包括数组元素）整体替换。
 
 前台 mobile tunnel 获取 token 失败时保留云 API 分类和 RequestId；超时、取消保留各自分类。
 握手 HTTP 401/403 返回 `TUNNEL_AUTH_FAILED`（退出码 4）。本地端口占用返回

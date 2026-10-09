@@ -259,6 +259,7 @@ func TestDebugLogRedactsAcrossWriteBoundaries(t *testing.T) {
 		"Cookie: session=split-cookie; other=second-secret\n",
 		"Cookie: session=\"split-cookie\" ordinary text\n",
 		"Set-Cookie: split-cookie\n",
+		`headers: {"Cookie":["session=\"split-cookie\""],"Set-Cookie":["a=split-cookie","b=second-secret"]}` + "\n",
 		"credentials: " + secretID + " " + secretKey + " " + tokenFlag + "\n",
 		"escaped credential: " + url.QueryEscape(secretKey) + "\n",
 		"request https://user:private-pass@example.invalid/path?%53ignature=private-signature&keep=visible\n",

@@ -516,6 +516,8 @@ Generic `Details.token`/`signature`/`sig` fields are not hidden by name alone;
 known credential values and explicit credential/header fields are still redacted.
 Bare Cookie values are hidden only at a header line start or in a quoted object
 field, so prose such as `failed to set cookie: permission denied` stays readable.
+In JSON (for example, a marshaled header map), every string of an
+Authorization/Cookie field, including each array element, is replaced whole.
 
 For foreground mobile tunnel failures, token acquisition retains cloud API
 classification and RequestId; timeouts and cancellations retain their own kinds.
