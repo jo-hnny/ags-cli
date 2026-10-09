@@ -198,6 +198,10 @@ func (t *Tunnel) Stop() {
 // endpoint is reachable and the token is valid. It connects, then immediately
 // sends a Close frame and disconnects. Returns nil if the probe succeeds.
 func (t *Tunnel) Probe() error {
+	return t.probe(probeTimeout)
+}
+
+func (t *Tunnel) probe(timeout time.Duration) error {
 	dialer := t.newDialer()
 
 	headers := http.Header{}
@@ -210,13 +214,17 @@ func (t *Tunnel) Probe() error {
 		headers.Set("Host", t.e2bHost)
 	}
 
-	probeCtx, probeCancel := context.WithTimeout(t.ctx, probeTimeout)
+	probeCtx, probeCancel := context.WithTimeout(t.ctx, timeout)
 	defer probeCancel()
 
 	wsConn, response, err := dialer.DialContext(probeCtx, t.wsURL, headers)
 	if err != nil {
+		var netErr net.Error
 		if probeCtx.Err() != nil && !errors.Is(err, probeCtx.Err()) {
 			err = errors.Join(err, probeCtx.Err())
+		} else if errors.As(err, &netErr) && netErr.Timeout() && !errors.Is(err, context.DeadlineExceeded) {
+			// The socket deadline mirrors probeCtx's and can fire before its timer.
+			err = errors.Join(err, context.DeadlineExceeded)
 		}
 		failure := &HandshakeError{Cause: err}
 		if response != nil {

@@ -32,7 +32,9 @@ credential or UTF-8 character, so each line is redacted as a whole once its
 newline arrives, and closing the log writes the final no-newline line. A line
 over 64 KiB keeps its redacted prefix up to the last whitespace before the limit
 plus a marker, and the rest of that line is dropped, so memory and work stay
-bounded. Values spanning lines are not recognized. Business stderr is still
+bounded. A quoted header/Cookie value whose closing quote is missing on its
+line (including one cut by truncation) is redacted to the end of the line;
+following lines are not treated as part of it. Business stderr is still
 forwarded immediately and unchanged.
 
 ## Exit-path audit
@@ -72,6 +74,8 @@ new CLI wrappers on their existing paths.
   token-cache filesystem failure, before any cloud request.
 - A loopback HTTP server rejects the real WebSocket handshake; the test verifies
   status preservation and omission of its response body.
+- A silent loopback peer drives real handshake timeouts; whether the socket
+  deadline or the context timer fires first, the probe reports a timeout.
 - Wrapped classification, cloud RequestId, timeout/cancellation, credential/header/
   signed-URL redaction and non-mutating failure sanitization have local tests.
 

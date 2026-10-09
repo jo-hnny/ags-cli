@@ -369,6 +369,8 @@ func TestDebugLogLongLines(t *testing.T) {
 		{"ordinary overflow", fill + " " + strings.Repeat("z", 100) + "\nnext\n", fill + " " + debugLogOverflowMarker + "\nnext\n"},
 		{"credential split by cut", fill + " Bearer=" + tokenFlag + " tail\nnext\n", fill + " " + debugLogOverflowMarker + "\nnext\n"},
 		{"credential before cut", header + " " + strings.Repeat("w", debugLogLineLimit) + "\nnext\n", redactSensitive(header) + " " + debugLogOverflowMarker + "\nnext\n"},
+		{"quoted header split by cut", `Authorization: Bearer "private-value ` + strings.Repeat("w ", debugLogLineLimit) + "tail\"\nnext\n", "Authorization: [REDACTED] " + debugLogOverflowMarker + "\nnext\n"},
+		{"quoted cookie split by cut", `Cookie: session="private-value ` + strings.Repeat("w ", debugLogLineLimit) + "tail\"\nnext\n", "Cookie: session=[REDACTED] " + debugLogOverflowMarker + "\nnext\n"},
 		{"no whitespace", strings.Repeat("q", debugLogLineLimit+1) + "\nnext\n", debugLogOverflowMarker + "\nnext\n"},
 		{"unterminated", fill + " " + strings.Repeat("z", 100), fill + " " + debugLogOverflowMarker},
 	} {

@@ -496,9 +496,10 @@ exit code.
 The file is redacted line by line. A line longer than 64 KiB keeps its redacted
 prefix up to the last whitespace before the limit, followed by
 `[REDACTED: line exceeded 64 KiB]`; the rest of that line is omitted from the
-file. Values that span lines, such as a quoted header value containing a
-newline, are not recognized as one value. The original program stderr still
-reaches the terminal immediately and unchanged.
+file. A quoted header or Cookie value without its closing quote on the same
+line, including one cut by truncation, is redacted to the end of that line;
+following lines are not recognized as part of it. The original program stderr
+still reaches the terminal immediately and unchanged.
 
 Default log files are created per process and are not automatically rotated or
 deleted. `AGR_DEBUG=1` also reaches background mobile tunnel processes through

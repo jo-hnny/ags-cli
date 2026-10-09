@@ -19,10 +19,15 @@ var diagnosticURL = regexp.MustCompile(`[a-zA-Z][a-zA-Z0-9+.-]*://[^\s<>"']+`)
 
 // Header values end at a semicolon in inline diagnostics; do not consume the
 // following operation/status text. Cookie pairs are handled separately.
-var diagnosticHeader = regexp.MustCompile(`(?im)(\b(?:authorization|proxy-authorization)["']?\s*[:=]\s*["']?)(?:(?:Bearer|Basic)\s+(?:"[^"]*"|'[^']*'|[^\s;,"']+)|(?:[^;\r\n"']+|"[^"]*"|'[^']*')+)`)
+// A quoted value without its closing quote (for example, cut by truncation)
+// extends to the end of its line, never into the next line.
+var diagnosticHeader = regexp.MustCompile(`(?im)(\b(?:authorization|proxy-authorization)["']?\s*[:=]\s*["']?)(?:(?:Bearer|Basic)\s+(?:"[^"\r\n]*"?|'[^'\r\n]*'?|[^\s;,"']+)|(?:[^;\r\n"']+|"[^"\r\n]*"?|'[^'\r\n]*'?)+)`)
 var diagnosticAuthScheme = regexp.MustCompile(`(?i)^(?:Bearer|Basic|Digest|Negotiate|NTLM|(?:AWS4|TC3)-HMAC-SHA256)\s+`)
 var diagnosticCookie = regexp.MustCompile(`(?i)\b(cookie|set-cookie)["']?\s*[:=]\s*["']?`)
-var diagnosticCookiePair = regexp.MustCompile(`^(\s*[^=\s;"']+\s*=\s*)("[^"]*"|[^;\s"']+)(;\s*)?`)
+
+// Unquoted cookie values may contain single quotes and commas (RFC 6265 allows
+// any octet except controls, whitespace, DQUOTE, semicolon and backslash).
+var diagnosticCookiePair = regexp.MustCompile(`^(\s*[^=\s;"']+\s*=\s*)("[^"\r\n]*"?|[^;\s"]+)(;\s*)?`)
 var diagnosticQuery = regexp.MustCompile(`([?&;])([^=&#;]+)=([^&#;]*)`)
 
 // Normal failures redact sensitive values without imposing a diagnostic limit.
@@ -49,7 +54,7 @@ func redactSensitive(text string) string {
 				// Bare values need a header boundary; prose such as
 				// "failed to set cookie: permission denied" is not a header.
 				if clean.Len() == 0 && isDiagnosticHeaderStart(text, matches[i][0]) {
-					n := strings.IndexAny(rest, "; \t\r\n\"',")
+					n := strings.IndexAny(rest, "; \t\r\n\"")
 					if n < 0 {
 						n = len(rest)
 					}
