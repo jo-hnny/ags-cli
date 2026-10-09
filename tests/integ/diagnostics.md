@@ -41,8 +41,12 @@ is found, and overlapping occurrences (of one value or of different values) are
 merged into one `[REDACTED]`. The writer holds back only a tail that could still
 become a value, together with any complete value that crosses into that tail,
 so written bytes are never part of a later match; there is no line buffering or
-line limit. If output ends with a fragment that may start a value, it is written
-as `[REDACTED]`.
+line limit. Held-back bytes are not strictly bounded: a continuous chain of
+overlapping occurrences (only possible when values overlap themselves or each
+other, and they are repeated back to back) is held, and rescanned on each write,
+until the chain ends. Normally delimited output does not form such chains. If
+output ends with a fragment that may start a value, it is written as
+`[REDACTED]`.
 Business stderr is still forwarded immediately and unchanged.
 
 ## Exit-path audit
