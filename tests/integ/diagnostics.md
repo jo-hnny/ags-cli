@@ -3,7 +3,29 @@
 The root `renderExecuteError` is the only error-chain printer. It prints before
 checking the already-written-output marker. The marker carries a cause but never
 requests a second envelope or stream event. Debug output is redacted before it
-reaches stderr and limited to 8 KiB plus a truncation marker.
+reaches stderr and limited to 8 KiB plus a truncation marker. Long chains share
+the terminal budget across nodes so outer context cannot crowd out a short cause.
+
+## Debug log files
+
+`--debug` (or `AGR_DEBUG=1`) creates a private log under
+`$HOME/.agr/logs/agr-<UTC timestamp>-<unique suffix>.log` for each invocation.
+`--debug-log <path>` enables debug and appends to the specified file, creating
+parent directories as needed. For example:
+
+```sh
+agr --debug instance get ssi-example
+agr --debug-log ./logs/agr.log instance get ssi-example -o json
+```
+
+The file contains full, redacted debug messages and a copy of stderr. Length
+limits apply only to terminal diagnostics; stdout and remote-program data keep
+their existing contracts. Both successful and failed exits print `Debug log:`
+with the file path to stderr. Error exits close the file explicitly before
+`os.Exit`. Log creation/write failures emit a warning without replacing the
+original command result or claiming a complete log. Existing custom files are
+appended, not truncated. New log files use mode 0600 and directories use 0700.
+`agr schema -o json` exposes these options in `Data.GlobalFlags`.
 
 ## Exit-path audit
 

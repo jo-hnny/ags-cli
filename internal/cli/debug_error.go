@@ -20,6 +20,7 @@ var diagnosticURL = regexp.MustCompile(`[a-zA-Z][a-zA-Z0-9+.-]*://[^\s<>"']+`)
 // Header values end at a semicolon in inline diagnostics; do not consume the
 // following operation/status text. Cookie pairs are handled separately.
 var diagnosticHeader = regexp.MustCompile(`(?im)(\b(?:authorization|proxy-authorization)["']?\s*[:=]\s*["']?)(?:(?:Bearer|Basic)\s+(?:"[^"]*"|'[^']*'|[^\s;,"']+)|(?:[^;\r\n"']+|"[^"]*"|'[^']*')+)`)
+var diagnosticAuthScheme = regexp.MustCompile(`(?i)^(?:Bearer|Basic|Digest|Negotiate|NTLM|(?:AWS4|TC3)-HMAC-SHA256)\s+`)
 var diagnosticCookie = regexp.MustCompile(`(?i)\b(cookie|set-cookie)["']?\s*[:=]\s*["']?`)
 var diagnosticCookiePair = regexp.MustCompile(`^(\s*[^=\s;"']+\s*=\s*)("[^"]*"|[^;\s"']+)(;\s*)?`)
 var diagnosticQuery = regexp.MustCompile(`([?&;])([^=&#;]+)=([^&#;]*)`)
@@ -27,7 +28,15 @@ var diagnosticQuery = regexp.MustCompile(`([?&;])([^=&#;]+)=([^&#;]*)`)
 // Normal failures redact sensitive values without imposing a diagnostic limit.
 func redactSensitive(text string) string {
 	text = diagnosticURL.ReplaceAllStringFunc(text, redactURL)
-	text = diagnosticHeader.ReplaceAllString(text, "${1}[REDACTED]")
+	// Explicit credential schemes can occur inline. Other values need a header
+	// boundary so prose such as "failed to set authorization: denied" survives.
+	headers := diagnosticHeader.FindAllStringSubmatchIndex(text, -1)
+	for i := len(headers) - 1; i >= 0; i-- {
+		match := headers[i]
+		if isDiagnosticHeaderStart(text, match[0]) || diagnosticAuthScheme.MatchString(text[match[3]:match[1]]) {
+			text = text[:match[3]] + "[REDACTED]" + text[match[1]:]
+		}
+	}
 	// Work backwards so replacing cookie values does not invalidate offsets.
 	matches := diagnosticCookie.FindAllStringIndex(text, -1)
 	for i := len(matches) - 1; i >= 0; i-- {
@@ -39,7 +48,7 @@ func redactSensitive(text string) string {
 			if pair == nil {
 				// Bare values need a header boundary; prose such as
 				// "failed to set cookie: permission denied" is not a header.
-				if clean.Len() == 0 && isCookieHeaderStart(text, matches[i][0]) {
+				if clean.Len() == 0 && isDiagnosticHeaderStart(text, matches[i][0]) {
 					n := strings.IndexAny(rest, "; \t\r\n\"',")
 					if n < 0 {
 						n = len(rest)
@@ -70,7 +79,7 @@ func redactSensitive(text string) string {
 	return text
 }
 
-func isCookieHeaderStart(text string, start int) bool {
+func isDiagnosticHeaderStart(text string, start int) bool {
 	lineStart := strings.LastIndexByte(text[:start], '\n') + 1
 	prefix := strings.TrimSpace(text[lineStart:start])
 	if prefix == "" {
@@ -86,9 +95,12 @@ func isCookieHeaderStart(text string, start int) bool {
 
 // Redact before truncating: truncation must not leave a partial credential.
 func redactDiagnostic(text string) string {
-	text = redactSensitive(text)
-	if len(text) > diagnosticLimit {
-		end := diagnosticLimit
+	return truncateDiagnostic(redactSensitive(text), diagnosticLimit)
+}
+
+func truncateDiagnostic(text string, limit int) string {
+	if len(text) > limit {
+		end := limit
 		for end > 0 && !utf8.RuneStart(text[end]) {
 			end--
 		}
@@ -164,7 +176,7 @@ func debugError(err error) {
 	if done, ok := err.(*envelopeAlreadyWritten); ok {
 		err = done.cause
 	}
-	var parts []string
+	var nodes []error
 	remaining := 32
 	var visit func(error)
 	visit = func(current error) {
@@ -172,10 +184,7 @@ func debugError(err error) {
 			return
 		}
 		remaining--
-		message := current.Error()
-		if message != "" && !strings.Contains(strings.Join(parts, "\n"), message) {
-			parts = append(parts, fmt.Sprintf("%T: %s", current, message))
-		}
+		nodes = append(nodes, current)
 		switch wrapped := current.(type) {
 		case interface{ Unwrap() []error }:
 			for _, child := range wrapped.Unwrap() {
@@ -186,8 +195,26 @@ func debugError(err error) {
 		}
 	}
 	visit(err)
+	if len(nodes) == 0 {
+		return
+	}
+	const separator = "\n  caused by: "
+	// Bound each node before deduplication: a long wrapper must not hide the
+	// child merely because its full Error() contains a cause beyond the limit.
+	limit := (diagnosticLimit-len("Debug: error=\n")-(len(nodes)-1)*len(separator))/len(nodes) - len(" [truncated]")
+	var parts []string
+	var fullParts []string
+	for _, current := range nodes {
+		message := redactSensitive(current.Error())
+		if message != "" && !strings.Contains(strings.Join(fullParts, "\n"), message) {
+			fullParts = append(fullParts, fmt.Sprintf("%T: %s", current, message))
+		}
+		if message != "" && !strings.Contains(strings.Join(parts, "\n"), message) {
+			parts = append(parts, truncateDiagnostic(fmt.Sprintf("%T: %s", current, message), limit))
+		}
+	}
 	if len(parts) > 0 {
-		debugf("Debug: error=%s\n", strings.Join(parts, "\n  caused by: "))
+		writeDebugDiagnostic("Debug: error="+strings.Join(parts, separator)+"\n", "Debug: error="+strings.Join(fullParts, separator)+"\n")
 	}
 }
 

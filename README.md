@@ -467,7 +467,8 @@ See `agr schema -o json --jq '.Data.ExitCodes'` for the full list.
 --token           Tencent Cloud STS session token
 --non-interactive Disable interactive behavior
 --no-color        Disable ANSI color
---debug           Write debug diagnostics to stderr
+--debug           Write debug diagnostics to stderr and full redacted logs locally
+--debug-log       Append debug logs to a specified file (enables --debug)
 ```
 
 Environment variables: `TENCENTCLOUD_SECRET_ID`, `TENCENTCLOUD_SECRET_KEY`, `TENCENTCLOUD_TOKEN`, `AGR_OUTPUT`, `AGR_REGION`, `AGR_CLOUD_ENDPOINT`, `AGR_DOMAIN`, `AGR_NON_INTERACTIVE`, `AGR_DEBUG`, `NO_COLOR`.
@@ -485,9 +486,16 @@ SecretId/SecretKey/Token values, Authorization/Cookie headers, signed URL query
 parameters, and URL passwords before writing to stderr. No stack dump or upload
 is performed.
 
+`--debug` (or `AGR_DEBUG=1`) also saves full redacted diagnostics and stderr to
+`~/.agr/logs/agr-<UTC timestamp>-<unique suffix>.log`. Use
+`--debug-log ./logs/agr.log` to enable debug and append to a specified file.
+The file has no diagnostic length limit. Successful and failed commands print
+`Debug log: <absolute path>` to stderr; logging failures produce a warning
+without replacing the command's result or exit code.
+
 Redaction also applies to ordinary text errors and JSON/NDJSON `Failure` fields,
-including nested `Details`, without truncating ordinary error strings. Only debug
-diagnostics are capped at 8 KiB plus a UTF-8-safe truncation marker. Header
+including nested `Details`, without truncating ordinary error strings. Only
+terminal debug diagnostics are capped at 8 KiB plus a UTF-8-safe truncation marker. Header
 redaction preserves surrounding status text, and URL redaction changes only
 passwords and sensitive query values, even when unrelated URL escapes are malformed.
 Generic `Details.token`/`signature`/`sig` fields are not hidden by name alone;

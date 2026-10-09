@@ -13,6 +13,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/TencentCloudAgentRuntime/ags-cli/internal/command"
+	"github.com/TencentCloudAgentRuntime/ags-cli/internal/iostreams"
 	"github.com/TencentCloudAgentRuntime/ags-cli/internal/output"
 	"github.com/spf13/cobra"
 )
@@ -23,6 +24,12 @@ func TestDebugErrorProcess(t *testing.T) {
 	if os.Getenv("AGR_TEST_DEBUG_HELPER") == "1" {
 		mode, route := os.Getenv("AGR_TEST_OUTPUT"), os.Getenv("AGR_TEST_ROUTE")
 		cause := fmt.Errorf("opening test connection: %w", errors.New("unique-original-cause credential=test-secret https://user:proxy-pass@localhost/path?Signature=signed-value"))
+		if os.Getenv("AGR_TEST_LONG_CHAIN") == "1" {
+			cause = fmt.Errorf("opening test connection %s: %w", strings.Repeat("错", 3000), cause)
+		}
+		if os.Getenv("AGR_TEST_AUTH_PROSE") == "1" {
+			cause = output.NewCLIError(&output.Failure{Code: "CUSTOM", Kind: output.KindGenericError, Message: "failed to set authorization: permission denied by policy"})
+		}
 		if os.Getenv("AGR_TEST_PRESERVE") == "1" {
 			cause = output.NewCLIError(&output.Failure{Code: "CUSTOM", Kind: output.KindGenericError, Message: strings.Repeat("x", 9000) + " Authorization: Bearer private-token; upstream returned 403"})
 		}
@@ -34,6 +41,9 @@ func TestDebugErrorProcess(t *testing.T) {
 			spec.SupportsNDJSON = true
 		}
 		handler := func(context.Context, command.Request) (*command.Result, error) {
+			if os.Getenv("AGR_TEST_SUCCESS") == "1" {
+				return &command.Result{Data: map[string]any{"OK": true}}, nil
+			}
 			if mode == "ndjson" {
 				nw := output.NewNDJSONWriter(ios.Out, spec.ID)
 				_ = nw.WriteStarted(nil)
@@ -70,9 +80,15 @@ func TestDebugErrorProcess(t *testing.T) {
 		if os.Getenv("AGR_TEST_DEBUG") == "1" {
 			os.Args = append(os.Args, "--debug")
 		}
+		if path := os.Getenv("AGR_TEST_DEBUG_LOG"); path != "" {
+			os.Args = append(os.Args, "--debug-log", path)
+		}
 		os.Args = append(os.Args, spec.Path...)
+		if os.Getenv("AGR_TEST_HELP_EXIT") == "1" {
+			os.Args = append(os.Args, "--jq=.", "--help")
+		}
 		Execute()
-		return
+		os.Exit(0)
 	}
 	for _, route := range []string{"legacy", "registry", "text-only"} {
 		for _, mode := range []string{"text", "json", "ndjson"} {
@@ -86,7 +102,8 @@ func TestDebugErrorProcess(t *testing.T) {
 					if debug {
 						debugValue = "1"
 					}
-					cmd.Env = append(os.Environ(), "AGR_TEST_DEBUG_HELPER=1", "AGR_TEST_OUTPUT="+mode, "AGR_TEST_ROUTE="+route, "AGR_TEST_DEBUG="+debugValue, "HOME="+t.TempDir())
+					home := t.TempDir()
+					cmd.Env = append(os.Environ(), "AGR_TEST_DEBUG_HELPER=1", "AGR_TEST_OUTPUT="+mode, "AGR_TEST_ROUTE="+route, "AGR_TEST_DEBUG="+debugValue, "HOME="+home, "USERPROFILE="+home)
 					var stdout, stderr bytes.Buffer
 					cmd.Stdout, cmd.Stderr = &stdout, &stderr
 					err := cmd.Run()
@@ -182,6 +199,14 @@ func TestOrdinaryFailureCompatibility(t *testing.T) {
 
 func TestRedactionPreservesFailureContext(t *testing.T) {
 	for _, tc := range []struct{ raw, want string }{
+		{"failed to set authorization: permission denied by policy", "failed to set authorization: permission denied by policy"},
+		{`failed to set "Authorization": permission denied`, `failed to set "Authorization": permission denied`},
+		{"failed to set proxy-authorization: permission denied", "failed to set proxy-authorization: permission denied"},
+		{"request headers:\n  Authorization: opaque-private-token; upstream returned 403", "request headers:\n  Authorization: [REDACTED]; upstream returned 403"},
+		{"request failed with Authorization: Bearer private-token; upstream returned 403", "request failed with Authorization: [REDACTED]; upstream returned 403"},
+		{"request failed with Proxy-Authorization: Basic private-token; upstream returned 403", "request failed with Proxy-Authorization: [REDACTED]; upstream returned 403"},
+		{`request headers: Authorization: Digest username="user", response="private-signature"; upstream returned 403`, "request headers: Authorization: [REDACTED]; upstream returned 403"},
+		{"request headers: Authorization: TC3-HMAC-SHA256 Credential=private-id, Signature=private-signature; upstream returned 403", "request headers: Authorization: [REDACTED]; upstream returned 403"},
 		{"failed to set cookie: permission denied", "failed to set cookie: permission denied"},
 		{"failed to set Set-Cookie: permission denied", "failed to set Set-Cookie: permission denied"},
 		{`failed to set "cookie": permission denied`, `failed to set "cookie": permission denied`},
@@ -216,6 +241,84 @@ func TestRedactionPreservesFailureContext(t *testing.T) {
 	nested := got.Details["nested"].(map[string]any)
 	if nested["reason"] != long || nested["SecretKey"] != "[REDACTED]" {
 		t.Fatal("nested detail policy incorrect")
+	}
+}
+
+func TestFailureProcessPreservesAuthorizationReason(t *testing.T) {
+	for _, mode := range []string{"text", "json", "ndjson"} {
+		t.Run(mode, func(t *testing.T) {
+			cmd := exec.CommandContext(t.Context(), os.Args[0], "-test.run=^TestDebugErrorProcess$")
+			home := t.TempDir()
+			cmd.Env = append(os.Environ(), "AGR_TEST_DEBUG_HELPER=1", "AGR_TEST_OUTPUT="+mode, "AGR_TEST_ROUTE=registry", "AGR_TEST_DEBUG=0", "AGR_TEST_AUTH_PROSE=1", "HOME="+home, "USERPROFILE="+home)
+			var stdout, stderr bytes.Buffer
+			cmd.Stdout, cmd.Stderr = &stdout, &stderr
+			var exit *exec.ExitError
+			if err := cmd.Run(); !errors.As(err, &exit) || exit.ExitCode() != 1 {
+				t.Fatalf("exit=%v", err)
+			}
+			if !strings.Contains(stdout.String()+stderr.String(), "failed to set authorization: permission denied by policy") {
+				t.Fatalf("authorization reason lost in %s output", mode)
+			}
+		})
+	}
+}
+
+func TestDebugErrorProcessPreservesLongChainCause(t *testing.T) {
+	for _, mode := range []string{"text", "json", "ndjson"} {
+		t.Run(mode, func(t *testing.T) {
+			cmd := exec.CommandContext(t.Context(), os.Args[0], "-test.run=^TestDebugErrorProcess$")
+			home := t.TempDir()
+			cmd.Env = append(os.Environ(), "AGR_TEST_DEBUG_HELPER=1", "AGR_TEST_OUTPUT="+mode, "AGR_TEST_ROUTE=registry", "AGR_TEST_DEBUG=1", "AGR_TEST_LONG_CHAIN=1", "HOME="+home, "USERPROFILE="+home)
+			var stdout, stderr bytes.Buffer
+			cmd.Stdout, cmd.Stderr = &stdout, &stderr
+			var exit *exec.ExitError
+			if err := cmd.Run(); !errors.As(err, &exit) || exit.ExitCode() != 1 {
+				t.Fatalf("exit=%v", err)
+			}
+			if !strings.Contains(stderr.String(), "unique-original-cause") || !strings.Contains(stderr.String(), "[truncated]") || !strings.Contains(stderr.String(), "opening test connection") {
+				t.Fatalf("debug context or cause lost in %s output", mode)
+			}
+			if !utf8.Valid(stderr.Bytes()) {
+				t.Fatal("invalid UTF-8 diagnostic")
+			}
+			for _, secret := range []string{"test-secret", "proxy-pass", "signed-value"} {
+				if strings.Contains(stdout.String()+stderr.String(), secret) {
+					t.Fatalf("secret leaked: %s", secret)
+				}
+			}
+		})
+	}
+}
+
+func TestDebugErrorBoundsEveryCause(t *testing.T) {
+	oldIO, oldDebug := ios, debugFlag
+	t.Cleanup(func() { ios, debugFlag = oldIO, oldDebug })
+	debugFlag = true
+	long := strings.Repeat("错", 3000)
+	leaf := errors.New("unique-underlying-cause")
+	nested := leaf
+	for range 8 {
+		nested = fmt.Errorf("operation %s: %w", long, nested)
+	}
+	for _, tc := range []struct {
+		name string
+		err  error
+	}{
+		{"nested", nested},
+		{"joined", errors.Join(fmt.Errorf("operation %s: %w", long, leaf), errors.New("unique-second-cause"))},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var stderr *bytes.Buffer
+			ios, _, _, stderr = iostreams.Test()
+			debugError(tc.err)
+			got := stderr.String()
+			if !strings.Contains(got, "unique-underlying-cause") || !strings.Contains(got, "[truncated]") || len(got) > diagnosticLimit || !utf8.ValidString(got) {
+				t.Fatalf("invalid bounded diagnostic length=%d", len(got))
+			}
+			if tc.name == "joined" && !strings.Contains(got, "unique-second-cause") {
+				t.Fatal("joined cause lost")
+			}
+		})
 	}
 }
 

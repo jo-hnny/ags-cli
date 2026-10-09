@@ -315,10 +315,8 @@ func debugf(format string, args ...any) {
 	if !debugFlag {
 		return
 	}
-	if ios == nil {
-		initIOStreams()
-	}
-	fmt.Fprint(ios.ErrOut, redactDiagnostic(fmt.Sprintf(format, args...)))
+	text := fmt.Sprintf(format, args...)
+	writeDebugDiagnostic(text, text)
 }
 
 func debugCommand(commandID string) {

@@ -431,7 +431,8 @@ agr instance exec "$id" --stream -o ndjson -- tail -f app.log
 --secret-key      腾讯云 SecretKey
 --non-interactive 禁用交互提示
 --no-color        关闭 ANSI 颜色
---debug           将调试信息写到 stderr
+--debug           将调试信息写到 stderr，并在本地保存完整脱敏日志
+--debug-log       将调试日志追加到指定文件（自动开启 --debug）
 ```
 
 环境变量：`TENCENTCLOUD_SECRET_ID`、`TENCENTCLOUD_SECRET_KEY`、
@@ -450,8 +451,14 @@ agr instance exec "$id" --stream -o ndjson -- tail -f app.log
 NDJSON 流仍只输出一次终止事件；未知错误在普通模式下仍显示 `INTERNAL_ERROR`。
 诊断写出前会处理当前生效的 SecretId/SecretKey/Token、Authorization/Cookie 请求头、
 URL 签名参数及 URL 密码，不生成堆栈转储或上传日志。
+
+`--debug`（或 `AGR_DEBUG=1`）还会将完整脱敏诊断和 stderr 保存到
+`~/.agr/logs/agr-<UTC 时间>-<随机后缀>.log`。可用 `--debug-log ./logs/agr.log`
+开启 debug 并追加到指定文件。文件中的诊断不限长；命令成功或失败时都会在 stderr
+显示 `Debug log: <绝对路径>`。日志写入失败会给出警告，保留原命令结果和退出码。
+
 普通 text 错误和 JSON/NDJSON 的 Failure 字段（含嵌套 Details）也会脱敏；
-普通错误字符串不截断，仅 debug 诊断限制为 8 KiB 加 UTF-8 安全截断标记。
+普通错误字符串不截断，仅终端 debug 诊断限制为 8 KiB 加 UTF-8 安全截断标记。
 头部脱敏保留周围状态文字，URL 只替换密码和敏感 query 值；其他参数转义损坏时也不整段隐藏。
 Details 中通用的 token/signature/sig 字段不再仅凭名字隐藏；已知凭据值及明确的凭据/头部字段仍会脱敏。
 裸 Cookie 值仅在头部行首或带引号的对象字段中隐藏，保留 `failed to set cookie: permission denied` 等普通文字。
