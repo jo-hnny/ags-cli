@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
 	"os"
 	"os/exec"
 	"strings"
@@ -234,7 +235,10 @@ func TestRedactionPreservesFailureContext(t *testing.T) {
 		{`headers: {"Authorization":["Bearer private-token"],"Cookie":["session=\"private-cookie\""],"Set-Cookie":["a=private-a","b=private-b"]}; upstream returned 403`, `headers: {"Authorization":["[REDACTED]"],"Cookie":["[REDACTED]"],"Set-Cookie":["[REDACTED]","[REDACTED]"]}; upstream returned 403`},
 		{`{"Cookie":"session=\"private-cookie\"", "reason":"upstream returned 403"}`, `{"Cookie":"[REDACTED]", "reason":"upstream returned 403"}`},
 		{`header: "Cookie: session=\"private-cookie\""; upstream returned 403`, `header: "Cookie: session=[REDACTED]"; upstream returned 403`},
-		{"headers: map[Authorization:[Bearer private-token] Cookie:[session=private-cookie]]", "headers: map[Authorization:[[REDACTED]] Cookie:[session=[REDACTED]"},
+		{"headers: map[Authorization:[Bearer private-token] Cookie:[session=private-cookie]]", "headers: map[Authorization:[[REDACTED]] Cookie:[[REDACTED]]]"},
+		{`{"Authorization":[],"Reason":["upstream returned 403"]}`, `{"Authorization":[],"Reason":["upstream returned 403"]}`},
+		{`{"Proxy-Authorization":null,"Reason":["upstream returned 403"]}`, `{"Proxy-Authorization":null,"Reason":["upstream returned 403"]}`},
+		{"map[Authorization:[Bearer private-first Basic private-second] Reason:[upstream returned 403]]", "map[Authorization:[[REDACTED]] Reason:[upstream returned 403]]"},
 		{`Authorization: "private-token"; upstream returned 403`, `Authorization: "[REDACTED]"; upstream returned 403`},
 		{`Authorization: 'private-token'; upstream returned 403`, `Authorization: '[REDACTED]'; upstream returned 403`},
 		{"Authorization: Bearer private-token; upstream returned 403", "authorization: [REDACTED]; upstream returned 403"},
@@ -257,6 +261,32 @@ func TestRedactionPreservesFailureContext(t *testing.T) {
 	nested := got.Details["nested"].(map[string]any)
 	if nested["reason"] != long || nested["SecretKey"] != "[REDACTED]" {
 		t.Fatal("nested detail policy incorrect")
+	}
+}
+
+func TestRedactionHTTPHeaderMatrix(t *testing.T) {
+	oldIO, oldDebug := ios, debugFlag
+	t.Cleanup(func() { ios, debugFlag = oldIO, oldDebug })
+	debugFlag = true
+	for _, key := range []string{"Authorization", "Proxy-Authorization", "Cookie", "Set-Cookie"} {
+		for _, values := range [][]string{nil, {}, {"Bearer private-first"}, {"Bearer private-first", "Basic private-second"}} {
+			header := http.Header{key: values, "A-Reason": {"denied by policy"}, "Reason": {"upstream returned 403"}}
+			encoded, err := json.Marshal(header)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, raw := range []string{fmt.Sprint(header), string(encoded)} {
+				failure := sanitizeFailure(&output.Failure{Message: raw})
+				var stderr *bytes.Buffer
+				ios, _, _, stderr = iostreams.Test()
+				debugError(errors.New(raw))
+				for path, got := range map[string]string{"failure": failure.Message, "stderr": stderr.String(), "log": captureDebugLogChunks(t, []string{raw + "\n"})} {
+					if strings.Contains(got, "private-") || !strings.Contains(got, "denied by policy") || !strings.Contains(got, "upstream returned 403") {
+						t.Errorf("%s: %q -> %q", path, raw, got)
+					}
+				}
+			}
+		}
 	}
 }
 

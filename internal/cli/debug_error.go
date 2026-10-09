@@ -6,6 +6,7 @@ import (
 	"net/url"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"unicode/utf8"
 
@@ -21,14 +22,17 @@ var diagnosticURL = regexp.MustCompile(`[a-zA-Z][a-zA-Z0-9+.-]*://[^\s<>"']+`)
 // following operation/status text. Cookie pairs are handled separately.
 // A quoted value ends at its matching closing quote; without one (for example,
 // cut by truncation) it extends to the end of its line, never into the next.
-var diagnosticHeader = regexp.MustCompile(`(?im)(\b(?:authorization|proxy-authorization)["']?\s*[:=]\s*(?:\[\s*)?)(?:"((?:[^"\\\r\n]|\\.)*)|'([^'\r\n]*)|((?:Bearer|Basic)\s+(?:"[^"\r\n]*"?|'[^'\r\n]*'?|[^\s;,"'\]]+)|(?:[^;\r\n"']+|"[^"\r\n]*"?|'[^'\r\n]*'?)+))`)
+var diagnosticHeader = regexp.MustCompile(`(?im)(\b(?:authorization|proxy-authorization)["']?\s*[:=]\s*)(?:"((?:[^"\\\r\n]|\\.)*)|'([^'\r\n]*)|((?:Bearer|Basic)\s+(?:"[^"\r\n]*"?|'[^'\r\n]*'?|[^\s;,"']+)|(?:[^;\r\n"']+|"[^"\r\n]*"?|'[^'\r\n]*'?)+))`)
 var diagnosticAuthScheme = regexp.MustCompile(`(?i)^(?:Bearer|Basic|Digest|Negotiate|NTLM|(?:AWS4|TC3)-HMAC-SHA256)\s+`)
-var diagnosticCookie = regexp.MustCompile(`(?i)\b(cookie|set-cookie)["']?\s*[:=]\s*(?:\[\s*)?["']?`)
+var diagnosticCookie = regexp.MustCompile(`(?i)\b(cookie|set-cookie)["']?\s*[:=]\s*["']?`)
 
-// JSON header values (strings or arrays, such as a marshaled http.Header) are
-// replaced literal by literal so escaped quotes cannot end a value early.
-var diagnosticJSONHeader = regexp.MustCompile(`(?i)("(?:authorization|proxy-authorization|cookie|set-cookie)"\s*:\s*)(\[\s*(?:"(?:[^"\\\r\n]|\\.)*"?\s*,?\s*)*\]?|"(?:[^"\\\r\n]|\\.)*"?)`)
+// Structured header values, such as a marshaled or printed http.Header, are
+// redacted as a whole: JSON strings, arrays and null, and Go's Key:[v1 v2]
+// lists. JSON literals are replaced one by one so escaped quotes cannot end a
+// value early.
+var diagnosticJSONHeader = regexp.MustCompile(`(?i)("(?:authorization|proxy-authorization|cookie|set-cookie)"\s*:\s*)(null|\[\s*(?:"(?:[^"\\\r\n]|\\.)*"?\s*,?\s*)*\]?|"(?:[^"\\\r\n]|\\.)*"?)`)
 var diagnosticJSONString = regexp.MustCompile(`"(?:[^"\\\r\n]|\\.)*"?`)
+var diagnosticListHeader = regexp.MustCompile(`(?i)\b((?:authorization|proxy-authorization|cookie|set-cookie):\[)([^\]\r\n]*)`)
 
 // Unquoted cookie values may contain single quotes and commas (RFC 6265 allows
 // any octet except controls, whitespace, DQUOTE, semicolon and backslash).
@@ -39,9 +43,23 @@ var diagnosticQuery = regexp.MustCompile(`([?&;])([^=&#;]+)=([^&#;]*)`)
 // Normal failures redact sensitive values without imposing a diagnostic limit.
 func redactSensitive(text string) string {
 	text = diagnosticURL.ReplaceAllStringFunc(text, redactURL)
+	// Hide redacted structured fields from the line-oriented passes below, which
+	// would reinterpret their brackets and consume neighbouring fields.
+	var structured []string
+	protect := func(field string) string {
+		structured = append(structured, field)
+		return "\x00" + strconv.Itoa(len(structured)-1) + "\x00"
+	}
 	text = diagnosticJSONHeader.ReplaceAllStringFunc(text, func(field string) string {
 		match := diagnosticJSONHeader.FindStringSubmatchIndex(field)
-		return field[:match[4]] + diagnosticJSONString.ReplaceAllString(field[match[4]:], `"[REDACTED]"`)
+		return protect(field[:match[4]] + diagnosticJSONString.ReplaceAllString(field[match[4]:], `"[REDACTED]"`))
+	})
+	text = diagnosticListHeader.ReplaceAllStringFunc(text, func(field string) string {
+		match := diagnosticListHeader.FindStringSubmatch(field)
+		if match[2] == "" {
+			return protect(field)
+		}
+		return protect(match[1] + "[REDACTED]")
 	})
 	// Explicit credential schemes can occur inline. Other values need a header
 	// boundary so prose such as "failed to set authorization: denied" survives.
@@ -85,6 +103,9 @@ func redactSensitive(text string) string {
 			rest = rest[len(pair[0]):]
 		}
 		text = text[:end] + clean.String() + rest
+	}
+	for i, field := range structured {
+		text = strings.Replace(text, "\x00"+strconv.Itoa(i)+"\x00", field, 1)
 	}
 	secrets := diagnosticSecrets()
 	// Replace longer overlapping values first.
