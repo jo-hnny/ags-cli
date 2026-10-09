@@ -80,6 +80,9 @@ func TestDebugErrorProcess(t *testing.T) {
 		if os.Getenv("AGR_TEST_DEBUG") == "1" {
 			os.Args = append(os.Args, "--debug")
 		}
+		if arg := os.Getenv("AGR_TEST_DEBUG_ARG"); arg != "" {
+			os.Args = append(os.Args, arg)
+		}
 		if path := os.Getenv("AGR_TEST_DEBUG_LOG"); path != "" {
 			os.Args = append(os.Args, "--debug-log", path)
 		}

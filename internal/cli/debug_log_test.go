@@ -177,6 +177,41 @@ func TestDebugLogSuccessAndEarlyHelpExit(t *testing.T) {
 	}
 }
 
+func TestDebugLogExplicitDebugValues(t *testing.T) {
+	for _, tc := range []struct {
+		arg, env string
+		want     bool
+	}{
+		{"--debug=true", "0", true},
+		{"--debug=1", "0", true},
+		{"--debug=false", "0", false},
+		{"--debug=false", "1", false}, // An explicit flag overrides AGR_DEBUG.
+		{"--debug=true", "1", true},
+	} {
+		t.Run(tc.arg+"/AGR_DEBUG="+tc.env, func(t *testing.T) {
+			home := t.TempDir()
+			cmd := exec.CommandContext(t.Context(), os.Args[0], "-test.run=^TestDebugErrorProcess$")
+			cmd.Env = append(os.Environ(), "AGR_TEST_DEBUG_HELPER=1", "AGR_TEST_ROUTE=registry", "AGR_TEST_OUTPUT=json", "AGR_TEST_SUCCESS=1", "AGR_TEST_DEBUG=0", "AGR_TEST_DEBUG_ARG="+tc.arg, "AGR_DEBUG="+tc.env, "HOME="+home, "USERPROFILE="+home)
+			var stdout, stderr bytes.Buffer
+			cmd.Stdout, cmd.Stderr = &stdout, &stderr
+			if err := cmd.Run(); err != nil {
+				t.Fatalf("exit=%v stderr=%s", err, &stderr)
+			}
+			files, err := filepath.Glob(filepath.Join(home, ".agr", "logs", "agr-*.log"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			got := len(files) == 1 && strings.Contains(stderr.String(), "Debug log: "+files[0])
+			if got != tc.want || !tc.want && (len(files) != 0 || strings.Contains(stderr.String(), "Debug")) {
+				t.Fatalf("logs=%v stderr=%s", files, &stderr)
+			}
+			if !json.Valid(stdout.Bytes()) {
+				t.Fatalf("JSON framing changed: %s", &stdout)
+			}
+		})
+	}
+}
+
 func TestDebugLogGlobalSchemaAndEarlyArguments(t *testing.T) {
 	oldDebug, oldPath := debugFlag, debugLogFlag
 	t.Cleanup(func() { debugFlag, debugLogFlag = oldDebug, oldPath })

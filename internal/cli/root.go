@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -630,6 +631,9 @@ func shouldAllowDiagnosticOutputOverride(cmd *cobra.Command) bool {
 	}
 }
 
+// A raw --debug value overrides AGR_DEBUG before Cobra parses flags.
+var debugFlagExplicit bool
+
 func applyRawGlobalArgs(args []string) {
 	for i := 0; i < len(args); i++ {
 		arg := args[i]
@@ -687,7 +691,12 @@ func applyRawGlobalArgs(args []string) {
 		case strings.HasPrefix(arg, "--cloud-endpoint="):
 			cloudEndpoint = strings.TrimPrefix(arg, "--cloud-endpoint=")
 		case arg == "--debug":
-			debugFlag = true
+			debugFlag, debugFlagExplicit = true, true
+		case strings.HasPrefix(arg, "--debug="):
+			// Invalid values are left for Cobra to reject.
+			if value, err := strconv.ParseBool(strings.TrimPrefix(arg, "--debug=")); err == nil {
+				debugFlag, debugFlagExplicit = value, true
+			}
 		case arg == "--debug-log" && i+1 < len(args):
 			debugLogFlag = args[i+1]
 			debugFlag = true
@@ -789,7 +798,7 @@ func initConfig() {
 	if os.Getenv("AGR_NON_INTERACTIVE") == "1" {
 		nonInteractive = true
 	}
-	if os.Getenv("AGR_DEBUG") == "1" || debugLogFlag != "" {
+	if os.Getenv("AGR_DEBUG") == "1" && !debugFlagExplicit || debugLogFlag != "" {
 		debugFlag = true
 	}
 
