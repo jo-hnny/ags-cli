@@ -27,6 +27,12 @@ original command result or claiming a complete log. Existing custom files are
 appended, not truncated. New log files use mode 0600 and directories use 0700.
 `agr schema -o json` exposes these options in `Data.GlobalFlags`.
 
+File-side redaction treats stderr as a continuous byte stream: transport chunks
+may split a credential or UTF-8 character. Complete safe lines are written while
+unfinished headers, quoted values and cross-line credentials remain buffered;
+closing the log redacts and writes the remaining tail, including no-newline
+output. Business stderr is still forwarded immediately and unchanged.
+
 ## Exit-path audit
 
 | Path | Diagnostic propagation / reason for no cause |

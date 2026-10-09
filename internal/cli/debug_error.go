@@ -67,7 +67,7 @@ func redactSensitive(text string) string {
 		}
 		text = text[:end] + clean.String() + rest
 	}
-	secrets := []string{secretID, secretKey, tokenFlag, config.GetSecretID(), config.GetSecretKey(), config.GetToken()}
+	secrets := diagnosticSecrets()
 	// Replace longer overlapping values first.
 	slices.SortFunc(secrets, func(a, b string) int { return len(b) - len(a) })
 	for _, secret := range secrets {
@@ -77,6 +77,10 @@ func redactSensitive(text string) string {
 		}
 	}
 	return text
+}
+
+func diagnosticSecrets() []string {
+	return []string{secretID, secretKey, tokenFlag, config.GetSecretID(), config.GetSecretKey(), config.GetToken()}
 }
 
 func isDiagnosticHeaderStart(text string, start int) bool {
