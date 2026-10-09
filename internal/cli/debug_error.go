@@ -6,8 +6,8 @@ import (
 	"net/url"
 	"regexp"
 	"slices"
-	"strconv"
 	"strings"
+	"sync"
 	"unicode/utf8"
 
 	"github.com/TencentCloudAgentRuntime/ags-cli/internal/config"
@@ -18,123 +18,59 @@ const diagnosticLimit = 8192
 
 var diagnosticURL = regexp.MustCompile(`[a-zA-Z][a-zA-Z0-9+.-]*://[^\s<>"']+`)
 
-// Header values end at a semicolon in inline diagnostics; do not consume the
-// following operation/status text. Cookie pairs are handled separately.
-// A quoted value ends at its matching closing quote; without one (for example,
-// cut by truncation) it extends to the end of its line, never into the next.
-var diagnosticHeader = regexp.MustCompile(`(?im)(\b(?:authorization|proxy-authorization)["']?\s*[:=]\s*)(?:"((?:[^"\\\r\n]|\\.)*)|'([^'\r\n]*)|((?:Bearer|Basic)\s+(?:"[^"\r\n]*"?|'[^'\r\n]*'?|[^\s;,"']+)|(?:[^;\r\n"']+|"[^"\r\n]*"?|'[^'\r\n]*'?)+))`)
-var diagnosticAuthScheme = regexp.MustCompile(`(?i)^(?:Bearer|Basic|Digest|Negotiate|NTLM|(?:AWS4|TC3)-HMAC-SHA256)\s+`)
-var diagnosticCookie = regexp.MustCompile(`(?i)\b(cookie|set-cookie)["']?\s*[:=]\s*["']?`)
-
-// Structured header values, such as a marshaled or printed http.Header, are
-// redacted as a whole: JSON strings, arrays and null, and Go's Key:[v1 v2]
-// lists. JSON literals are replaced one by one so escaped quotes cannot end a
-// value early.
-var diagnosticJSONHeader = regexp.MustCompile(`(?i)("(?:authorization|proxy-authorization|cookie|set-cookie)"\s*:\s*)(null|\[\s*(?:"(?:[^"\\\r\n]|\\.)*"?\s*,?\s*)*\]?|"(?:[^"\\\r\n]|\\.)*"?)`)
-var diagnosticJSONString = regexp.MustCompile(`"(?:[^"\\\r\n]|\\.)*"?`)
-var diagnosticListHeader = regexp.MustCompile(`(?i)\b((?:authorization|proxy-authorization|cookie|set-cookie):\[)([^\]\r\n]*)`)
-
-// Unquoted cookie values may contain single quotes and commas (RFC 6265 allows
-// any octet except controls, whitespace, DQUOTE, semicolon and backslash).
-// Quoted values may appear with escaped quotes inside a quoted string.
-var diagnosticCookiePair = regexp.MustCompile(`^(\s*[^=\s;"']+\s*=\s*)(\\?"[^"\\\r\n]*(?:\\?")?|[^;\s"]+)(;\s*)?`)
+// Only the credential after an explicit scheme is replaced. Real Bearer/Basic
+// credentials are long; the length floor keeps prose such as "basic
+// authentication failed" intact.
+var diagnosticAuthToken = regexp.MustCompile(`(?i)\b((?:Bearer|Basic)\s+["']?)[A-Za-z0-9._~+/-]{16,}=*`)
 var diagnosticQuery = regexp.MustCompile(`([?&;])([^=&#;]+)=([^&#;]*)`)
 
-// Normal failures redact sensitive values without imposing a diagnostic limit.
+// Redaction replaces credential values only and never removes surrounding
+// text: lost failure context defeats the purpose of diagnostics. Text formats
+// are not parsed; credentials the CLI holds are replaced by exact value.
 func redactSensitive(text string) string {
 	text = diagnosticURL.ReplaceAllStringFunc(text, redactURL)
-	// Hide redacted structured fields from the line-oriented passes below, which
-	// would reinterpret their brackets and consume neighbouring fields.
-	var structured []string
-	protect := func(field string) string {
-		structured = append(structured, field)
-		return "\x00" + strconv.Itoa(len(structured)-1) + "\x00"
+	text = diagnosticAuthToken.ReplaceAllString(text, "${1}[REDACTED]")
+	return maskSecrets(text, knownSecrets())
+}
+
+var runtimeSecrets struct {
+	sync.Mutex
+	values []string
+}
+
+// MaskSecret registers a credential obtained at runtime, such as a data-plane
+// access token, so diagnostics and debug logs replace it.
+func MaskSecret(secret string) {
+	runtimeSecrets.Lock()
+	defer runtimeSecrets.Unlock()
+	if secret != "" && !slices.Contains(runtimeSecrets.values, secret) {
+		runtimeSecrets.values = append(runtimeSecrets.values, secret)
 	}
-	text = diagnosticJSONHeader.ReplaceAllStringFunc(text, func(field string) string {
-		match := diagnosticJSONHeader.FindStringSubmatchIndex(field)
-		return protect(field[:match[4]] + diagnosticJSONString.ReplaceAllString(field[match[4]:], `"[REDACTED]"`))
-	})
-	text = diagnosticListHeader.ReplaceAllStringFunc(text, func(field string) string {
-		match := diagnosticListHeader.FindStringSubmatch(field)
-		if match[2] == "" {
-			return protect(field)
-		}
-		return protect(match[1] + "[REDACTED]")
-	})
-	// Explicit credential schemes can occur inline. Other values need a header
-	// boundary so prose such as "failed to set authorization: denied" survives.
-	headers := diagnosticHeader.FindAllStringSubmatchIndex(text, -1)
-	for i := len(headers) - 1; i >= 0; i-- {
-		match := headers[i]
-		start, end := match[4], match[5]
-		for group := 3; start < 0 && group <= 4; group++ {
-			start, end = match[2*group], match[2*group+1]
-		}
-		if isDiagnosticHeaderStart(text, match[0]) || diagnosticAuthScheme.MatchString(text[start:end]) {
-			text = text[:start] + "[REDACTED]" + text[end:]
-		}
-	}
-	// Work backwards so replacing cookie values does not invalidate offsets.
-	matches := diagnosticCookie.FindAllStringIndex(text, -1)
-	for i := len(matches) - 1; i >= 0; i-- {
-		end := matches[i][1]
-		rest := text[end:]
-		var clean strings.Builder
-		for {
-			pair := diagnosticCookiePair.FindStringSubmatch(rest)
-			if pair == nil {
-				// Bare values need a header boundary; prose such as
-				// "failed to set cookie: permission denied" is not a header.
-				if clean.Len() == 0 && isDiagnosticHeaderStart(text, matches[i][0]) {
-					n := strings.IndexAny(rest, "; \t\r\n\"")
-					if n < 0 {
-						n = len(rest)
-					}
-					if n > 0 {
-						clean.WriteString("[REDACTED]")
-						rest = rest[n:]
-					}
-				}
-				break
+}
+
+// knownSecrets returns raw and URL-encoded credential values, longest first so
+// overlapping values are replaced whole.
+func knownSecrets() []string {
+	runtimeSecrets.Lock()
+	values := append([]string{secretID, secretKey, tokenFlag, config.GetSecretID(), config.GetSecretKey(), config.GetToken()}, runtimeSecrets.values...)
+	runtimeSecrets.Unlock()
+	var secrets []string
+	for _, value := range values {
+		for _, form := range []string{value, url.QueryEscape(value)} {
+			if form != "" && !slices.Contains(secrets, form) {
+				secrets = append(secrets, form)
 			}
-			clean.WriteString(pair[1])
-			clean.WriteString("[REDACTED]")
-			clean.WriteString(pair[3])
-			rest = rest[len(pair[0]):]
 		}
-		text = text[:end] + clean.String() + rest
 	}
-	for i, field := range structured {
-		text = strings.Replace(text, "\x00"+strconv.Itoa(i)+"\x00", field, 1)
-	}
-	secrets := diagnosticSecrets()
-	// Replace longer overlapping values first.
 	slices.SortFunc(secrets, func(a, b string) int { return len(b) - len(a) })
+	return secrets
+}
+
+func maskSecrets(text string, secrets []string) string {
 	for _, secret := range secrets {
-		if secret != "" {
-			text = strings.ReplaceAll(text, secret, "[REDACTED]")
-			text = strings.ReplaceAll(text, url.QueryEscape(secret), "[REDACTED]")
-		}
+		text = strings.ReplaceAll(text, secret, "[REDACTED]")
 	}
 	return text
-}
-
-func diagnosticSecrets() []string {
-	return []string{secretID, secretKey, tokenFlag, config.GetSecretID(), config.GetSecretKey(), config.GetToken()}
-}
-
-func isDiagnosticHeaderStart(text string, start int) bool {
-	lineStart := strings.LastIndexByte(text[:start], '\n') + 1
-	prefix := strings.TrimSpace(text[lineStart:start])
-	if prefix == "" {
-		return true
-	}
-	// A quoted field at the start of a line or after an object delimiter.
-	if strings.HasSuffix(prefix, "\"") || strings.HasSuffix(prefix, "'") {
-		prefix = strings.TrimSpace(prefix[:len(prefix)-1])
-		return prefix == "" || strings.HasSuffix(prefix, "{") || strings.HasSuffix(prefix, ",")
-	}
-	return false
 }
 
 // Redact before truncating: truncation must not leave a partial credential.

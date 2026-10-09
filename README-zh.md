@@ -449,29 +449,31 @@ agr instance exec "$id" --stream -o ndjson -- tail -f app.log
 
 `--debug` 会将限长、脱敏后的错误链写到 stderr。JSON stdout 仍是单个 envelope，
 NDJSON 流仍只输出一次终止事件；未知错误在普通模式下仍显示 `INTERNAL_ERROR`。
-诊断写出前会处理当前生效的 SecretId/SecretKey/Token、Authorization/Cookie 请求头、
-URL 签名参数及 URL 密码，不生成堆栈转储或上传日志。
+不生成堆栈转储或上传日志。
+
+脱敏只替换凭据值本身，不删除周围文字，失败原因保持完整。替换范围：按精确值（原文及 URL
+编码形式）替换当前生效的 SecretId/SecretKey/Token 以及 CLI 获取的 data-plane/deployment
+访问 token；`Bearer`/`Basic` 后 16 个字符以上的凭据；URL 密码和签名 query 值。
+不从文本中猜测其他请求头的值。
 
 `--debug`（或 `AGR_DEBUG=1`）还会将完整脱敏诊断和 stderr 保存到
 `~/.agr/logs/agr-<UTC 时间>-<随机后缀>.log`。可用 `--debug-log ./logs/agr.log`
 开启 debug 并追加到指定文件。命令成功或失败时都会在 stderr
 显示 `Debug log: <绝对路径>`。日志写入失败会给出警告，保留原命令结果和退出码。
 
-文件按行脱敏。超过 64 KiB 的单行只保留限长前最后一个空白之前的脱敏内容，并追加
-`[REDACTED: line exceeded 64 KiB]`，该行其余部分不写入文件。请求头或 Cookie 的带引号值
-若在本行内没有闭合引号（包括被截断的值），会脱敏到行尾；后续行不会被识别为该值的一部分。
-远端程序原始 stderr 仍及时、原样显示在终端。
+复制的 stderr（包括远端程序输出）完整写入，不限制单行长度；只替换上述已知凭据值，
+即使输出分段切开了凭据也能识别。远端程序自己的秘密 CLI 无从得知，不会脱敏，
+与 `kubectl logs` 一致。远端程序原始 stderr 仍及时、原样显示在终端。
 
 默认日志按进程新建，没有自动轮转或清理。后台 mobile tunnel 子进程继承环境中的
-`AGR_DEBUG=1` 时，也会创建自己的日志文件。正常退出会写出最后一行未换行的内容；强制终止
-可能丢失这一行（最多 64 KiB）。不再需要的旧日志需自行删除。
+`AGR_DEBUG=1` 时，也会创建自己的日志文件。若输出以可能是已知凭据开头的片段结束，
+该片段写为 `[REDACTED]`。不再需要的旧日志需自行删除。
 
 普通 text 错误和 JSON/NDJSON 的 Failure 字段（含嵌套 Details）也会脱敏；
 普通错误字符串不截断，仅终端 debug 诊断限制为 8 KiB 加 UTF-8 安全截断标记。
-头部脱敏保留周围状态文字，URL 只替换密码和敏感 query 值；其他参数转义损坏时也不整段隐藏。
-Details 中通用的 token/signature/sig 字段不再仅凭名字隐藏；已知凭据值及明确的凭据/头部字段仍会脱敏。
-裸 Cookie 值仅在头部行首或带引号的对象字段中隐藏，保留 `failed to set cookie: permission denied` 等普通文字。
-序列化或打印的请求头映射（JSON 或 Go 的 `Key:[v1 v2]` 形式）中，Authorization/Cookie 的每个值（包括列表元素）整体替换；空值和 null 保持原样，相邻字段保留。
+URL 只替换密码和敏感 query 值；其他参数转义损坏时也不整段隐藏。
+Details 中以凭据或请求头命名的字段（如 `Authorization`、`Cookie`、`SecretKey`）会被替换；
+通用的 token/signature/sig 字段不仅凭名字隐藏。
 
 前台 mobile tunnel 获取 token 失败时保留云 API 分类和 RequestId；超时、取消保留各自分类。
 握手 HTTP 401/403 返回 `TUNNEL_AUTH_FAILED`（退出码 4）。本地端口占用返回

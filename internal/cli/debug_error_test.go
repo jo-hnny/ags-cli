@@ -14,6 +14,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/TencentCloudAgentRuntime/ags-cli/internal/command"
+	"github.com/TencentCloudAgentRuntime/ags-cli/internal/dataplane/token"
 	"github.com/TencentCloudAgentRuntime/ags-cli/internal/iostreams"
 	"github.com/TencentCloudAgentRuntime/ags-cli/internal/output"
 	"github.com/spf13/cobra"
@@ -32,7 +33,7 @@ func TestDebugErrorProcess(t *testing.T) {
 			cause = output.NewCLIError(&output.Failure{Code: "CUSTOM", Kind: output.KindGenericError, Message: "failed to set authorization: permission denied by policy"})
 		}
 		if os.Getenv("AGR_TEST_PRESERVE") == "1" {
-			cause = output.NewCLIError(&output.Failure{Code: "CUSTOM", Kind: output.KindGenericError, Message: strings.Repeat("x", 9000) + " Authorization: Bearer private-token; upstream returned 403"})
+			cause = output.NewCLIError(&output.Failure{Code: "CUSTOM", Kind: output.KindGenericError, Message: strings.Repeat("x", 9000) + " Authorization: Bearer private-token-0123456789; upstream returned 403"})
 		}
 		spec := command.Spec{ID: "diagnostic-test", Path: []string{"diagnostic-test"}, Use: "diagnostic-test", Short: "test", SupportsJSON: route != "text-only"}
 		if mode == "ndjson" {
@@ -158,12 +159,10 @@ func TestDebugErrorProcess(t *testing.T) {
 }
 
 func TestDiagnosticRedaction(t *testing.T) {
-	originalID, originalKey, originalToken := secretID, secretKey, tokenFlag
-	t.Cleanup(func() { secretID, secretKey, tokenFlag = originalID, originalKey, originalToken })
-	secretID, secretKey, tokenFlag = "test-id", "test-secret", "test-token"
-	raw := "test-id test-secret test-token https://user:proxy-password@host/path?Signature=signed-value&x-amz-security-token=other-token&ok=value\nAuthorization: Bearer auth-value\nCookie: session=cookie-value\n" + strings.Repeat("x", 9000) + "test-secret"
+	useTestSecrets(t)
+	raw := "test-access-id active-private/key test-session-token runtime-access-token-value https://user:proxy-password@host/path?Signature=signed-value&x-amz-security-token=other-token&ok=value\nAuthorization: Bearer auth-value-0123456789abcdef\n" + strings.Repeat("x", 9000) + "active-private/key"
 	got := redactDiagnostic(raw)
-	for _, secret := range []string{"test-id", "test-secret", "test-token", "proxy-password", "signed-value", "other-token", "auth-value", "cookie-value"} {
+	for _, secret := range append(testSecrets, "proxy-password", "signed-value", "other-token", "auth-value") {
 		if strings.Contains(got, secret) {
 			t.Fatalf("leaked %s", secret)
 		}
@@ -171,16 +170,16 @@ func TestDiagnosticRedaction(t *testing.T) {
 	if !strings.Contains(got, "ok=value") || !strings.HasSuffix(got, "[truncated]") || len(got) > diagnosticLimit+20 {
 		t.Fatalf("invalid bounded diagnostic length=%d", len(got))
 	}
-	f := &output.Failure{Code: "CUSTOM", Message: "test-secret", Details: map[string]any{"HTTPStatus": 403, "nested": map[string]any{"Authorization": "secret-header", "url": "https://host?Signature=signed-value"}}}
+	f := &output.Failure{Code: "CUSTOM", Message: "active-private/key", Details: map[string]any{"HTTPStatus": 403, "nested": map[string]any{"Authorization": "secret-header", "url": "https://host?Signature=signed-value"}}}
 	clean := sanitizeFailure(f)
 	data, err := json.Marshal(clean)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(string(data), "test-secret") || strings.Contains(string(data), "secret-header") || strings.Contains(string(data), "signed-value") {
+	if strings.Contains(string(data), "active-private/key") || strings.Contains(string(data), "secret-header") || strings.Contains(string(data), "signed-value") {
 		t.Fatalf("leaked failure: %s", data)
 	}
-	if f.Message != "test-secret" {
+	if f.Message != "active-private/key" {
 		t.Fatal("original failure mutated")
 	}
 }
@@ -201,54 +200,29 @@ func TestOrdinaryFailureCompatibility(t *testing.T) {
 	}
 }
 
+// Redaction replaces credential values only; every other byte survives.
 func TestRedactionPreservesFailureContext(t *testing.T) {
+	useTestSecrets(t)
+	const bearer = "eyJhbGciOiJIUzI1NiJ9.private-payload.signature"
 	for _, tc := range []struct{ raw, want string }{
 		{"failed to set authorization: permission denied by policy", "failed to set authorization: permission denied by policy"},
-		{`failed to set "Authorization": permission denied`, `failed to set "Authorization": permission denied`},
-		{"failed to set proxy-authorization: permission denied", "failed to set proxy-authorization: permission denied"},
-		{"request headers:\n  Authorization: opaque-private-token; upstream returned 403", "request headers:\n  Authorization: [REDACTED]; upstream returned 403"},
-		{"request failed with Authorization: Bearer private-token; upstream returned 403", "request failed with Authorization: [REDACTED]; upstream returned 403"},
-		{"request failed with Proxy-Authorization: Basic private-token; upstream returned 403", "request failed with Proxy-Authorization: [REDACTED]; upstream returned 403"},
-		{`request headers: Authorization: Digest username="user", response="private-signature"; upstream returned 403`, "request headers: Authorization: [REDACTED]; upstream returned 403"},
-		{"request headers: Authorization: TC3-HMAC-SHA256 Credential=private-id, Signature=private-signature; upstream returned 403", "request headers: Authorization: [REDACTED]; upstream returned 403"},
 		{"failed to set cookie: permission denied", "failed to set cookie: permission denied"},
-		{"failed to set Set-Cookie: permission denied", "failed to set Set-Cookie: permission denied"},
-		{`failed to set "cookie": permission denied`, `failed to set "cookie": permission denied`},
-		{"request headers:\n  Cookie: abc123; upstream returned 403", "request headers:\n  Cookie: [REDACTED]; upstream returned 403"},
-		{"request headers:\n  Authorization: \"abc\nreason: upstream returned 403", "request headers:\n  Authorization: \"[REDACTED]\nreason: upstream returned 403"},
-		{"Authorization: can't parse header\nreason: upstream returned 403", "Authorization: [REDACTED]\nreason: upstream returned 403"},
-		{"Authorization: Bearer \"private-prefix and more\nreason: upstream returned 403", "Authorization: [REDACTED]\nreason: upstream returned 403"},
-		{"Cookie: session=\"private-prefix and more\nreason: upstream returned 403", "Cookie: session=[REDACTED]\nreason: upstream returned 403"},
-		{"Cookie: session=prefix'private-cookie-suffix; upstream returned 403", "Cookie: session=[REDACTED]; upstream returned 403"},
-		{"Set-Cookie: session=prefix'private-cookie-suffix", "Set-Cookie: session=[REDACTED]"},
-		{"Set-Cookie: prefix'private-cookie-suffix", "Set-Cookie: [REDACTED]"},
-		{`{"reason":"denied", "Cookie":"abc123"}`, `{"reason":"denied", "Cookie":"[REDACTED]"}`},
-		{"Cookie: abc123", "Cookie: [REDACTED]"},
-		{"Cookie: abc123; upstream returned 403", "Cookie: [REDACTED]; upstream returned 403"},
-		{"Set-Cookie: abc123 upstream returned 403", "Set-Cookie: [REDACTED] upstream returned 403"},
-		{`"Cookie":"abc123", "reason":"upstream returned 403"`, `"Cookie":"[REDACTED]", "reason":"upstream returned 403"`},
-		{`Authorization: Digest username="user", response="private-signature"; upstream returned 403`, "Authorization: [REDACTED]; upstream returned 403"},
-		{`Authorization: Bearer "private-token"; upstream returned 403`, "Authorization: [REDACTED]; upstream returned 403"},
-		{"Authorization: Bearer private-token upstream returned 403", "Authorization: [REDACTED] upstream returned 403"},
-		{`"Authorization":"Bearer private-token", "reason":"upstream returned 403"`, `"Authorization":"[REDACTED]", "reason":"upstream returned 403"`},
-		{`"Cookie":"session=private-cookie; other=private-value", "reason":"upstream returned 403"`, `"Cookie":"[REDACTED]", "reason":"upstream returned 403"`},
-		{`headers: {"Authorization":["Bearer private-token"],"Cookie":["session=\"private-cookie\""],"Set-Cookie":["a=private-a","b=private-b"]}; upstream returned 403`, `headers: {"Authorization":["[REDACTED]"],"Cookie":["[REDACTED]"],"Set-Cookie":["[REDACTED]","[REDACTED]"]}; upstream returned 403`},
-		{`{"Cookie":"session=\"private-cookie\"", "reason":"upstream returned 403"}`, `{"Cookie":"[REDACTED]", "reason":"upstream returned 403"}`},
-		{`header: "Cookie: session=\"private-cookie\""; upstream returned 403`, `header: "Cookie: session=[REDACTED]"; upstream returned 403`},
-		{"headers: map[Authorization:[Bearer private-token] Cookie:[session=private-cookie]]", "headers: map[Authorization:[[REDACTED]] Cookie:[[REDACTED]]]"},
-		{`{"Authorization":[],"Reason":["upstream returned 403"]}`, `{"Authorization":[],"Reason":["upstream returned 403"]}`},
-		{`{"Proxy-Authorization":null,"Reason":["upstream returned 403"]}`, `{"Proxy-Authorization":null,"Reason":["upstream returned 403"]}`},
-		{"map[Authorization:[Bearer private-first Basic private-second] Reason:[upstream returned 403]]", "map[Authorization:[[REDACTED]] Reason:[upstream returned 403]]"},
-		{`Authorization: "private-token"; upstream returned 403`, `Authorization: "[REDACTED]"; upstream returned 403`},
-		{`Authorization: 'private-token'; upstream returned 403`, `Authorization: '[REDACTED]'; upstream returned 403`},
-		{"Authorization: Bearer private-token; upstream returned 403", "authorization: [REDACTED]; upstream returned 403"},
-		{"Cookie: session=private-cookie; other=private-value; upstream returned 403", "Cookie: session=[REDACTED]; other=[REDACTED]; upstream returned 403"},
+		{"basic authentication failed; bearer token expired", "basic authentication failed; bearer token expired"},
+		{"Authorization: can't parse header\nreason: upstream returned 403", "Authorization: can't parse header\nreason: upstream returned 403"},
+		{`Authorization: "opaque"; upstream returned 403`, `Authorization: "opaque"; upstream returned 403`},
+		{`{"Authorization":[],"Proxy-Authorization":null,"Reason":["upstream returned 403"]}`, `{"Authorization":[],"Proxy-Authorization":null,"Reason":["upstream returned 403"]}`},
+		{"Authorization: Bearer " + bearer + "; upstream returned 403", "Authorization: Bearer [REDACTED]; upstream returned 403"},
+		{`Authorization: Bearer "` + bearer + `"; upstream returned 403`, `Authorization: Bearer "[REDACTED]"; upstream returned 403`},
+		{"Proxy-Authorization: Basic dXNlcjpwcml2YXRlLXBhc3N3b3Jk upstream returned 403", "Proxy-Authorization: Basic [REDACTED] upstream returned 403"},
+		{"map[Authorization:[Bearer " + bearer + " Basic dXNlcjpwcml2YXRlLXBhc3N3b3Jk] Reason:[upstream returned 403]]", "map[Authorization:[Bearer [REDACTED] Basic [REDACTED]] Reason:[upstream returned 403]]"},
+		{`{"Authorization":["Bearer ` + bearer + `"],"Reason":["upstream returned 403"]}`, `{"Authorization":["Bearer [REDACTED]"],"Reason":["upstream returned 403"]}`},
+		{"Authorization: TC3-HMAC-SHA256 Credential=test-access-id/2026-10-09/ags/tc3_request; upstream returned 403", "Authorization: TC3-HMAC-SHA256 Credential=[REDACTED]/2026-10-09/ags/tc3_request; upstream returned 403"},
+		{`{"X-Access-Token":"runtime-access-token-value","Reason":"upstream returned 403"}`, `{"X-Access-Token":"[REDACTED]","Reason":"upstream returned 403"}`},
 		{"https://user:password@host/bad%zz?Signature=secret&normal=%zz&last=keep", "https://user:REDACTED@host/bad%zz?Signature=REDACTED&normal=%zz&last=keep"},
 		{"https://host/?normal=%zz&signature=secret;last=keep", "https://host/?normal=%zz&signature=REDACTED;last=keep"},
 		{"https://host/?normal=%zz&last=keep", "https://host/?normal=%zz&last=keep"},
 	} {
-		got := redactSensitive(tc.raw)
-		if !strings.EqualFold(got, tc.want) {
+		if got := redactSensitive(tc.raw); got != tc.want {
 			t.Errorf("redaction: got %q want %q", got, tc.want)
 		}
 	}
@@ -264,25 +238,58 @@ func TestRedactionPreservesFailureContext(t *testing.T) {
 	}
 }
 
+func TestDataPlaneTokensAreMasked(t *testing.T) {
+	useTestSecrets(t)
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	cache, err := token.NewCache()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name    string
+		acquire func(context.Context, string) (string, error)
+	}{{"cached", GetCachedTokenOrAcquire}, {"acquire", acquireInstanceToken}} {
+		t.Run(tc.name, func(t *testing.T) {
+			value := "data-plane-token-" + tc.name
+			if err := cache.Set("ins-"+tc.name, value); err != nil {
+				t.Fatal(err)
+			}
+			got, err := tc.acquire(t.Context(), "ins-"+tc.name)
+			if err != nil || got != value {
+				t.Fatalf("token=%q err=%v", got, err)
+			}
+			if masked := redactSensitive("connect failed with " + value); masked != "connect failed with [REDACTED]" {
+				t.Fatalf("data-plane token not masked: %q", masked)
+			}
+		})
+	}
+}
+
+// Header maps printed or marshaled in any shape keep every neighbouring field;
+// only the credentials the CLI holds are replaced, in all three output paths.
 func TestRedactionHTTPHeaderMatrix(t *testing.T) {
+	useTestSecrets(t)
 	oldIO, oldDebug := ios, debugFlag
 	t.Cleanup(func() { ios, debugFlag = oldIO, oldDebug })
 	debugFlag = true
-	for _, key := range []string{"Authorization", "Proxy-Authorization", "Cookie", "Set-Cookie"} {
-		for _, values := range [][]string{nil, {}, {"Bearer private-first"}, {"Bearer private-first", "Basic private-second"}} {
+	for _, key := range []string{"Authorization", "Proxy-Authorization", "X-Access-Token", "Cookie", "Set-Cookie"} {
+		for _, values := range [][]string{nil, {}, {"Bearer runtime-access-token-value"}, {"session=test-session-token", "Basic active-private/key"}} {
 			header := http.Header{key: values, "A-Reason": {"denied by policy"}, "Reason": {"upstream returned 403"}}
 			encoded, err := json.Marshal(header)
 			if err != nil {
 				t.Fatal(err)
 			}
 			for _, raw := range []string{fmt.Sprint(header), string(encoded)} {
+				want := maskSecrets(raw, testSecrets)
 				failure := sanitizeFailure(&output.Failure{Message: raw})
 				var stderr *bytes.Buffer
 				ios, _, _, stderr = iostreams.Test()
 				debugError(errors.New(raw))
 				for path, got := range map[string]string{"failure": failure.Message, "stderr": stderr.String(), "log": captureDebugLogChunks(t, []string{raw + "\n"})} {
-					if strings.Contains(got, "private-") || !strings.Contains(got, "denied by policy") || !strings.Contains(got, "upstream returned 403") {
-						t.Errorf("%s: %q -> %q", path, raw, got)
+					if !strings.Contains(got, want) {
+						t.Errorf("%s: %q -> %q, want %q", path, raw, got, want)
 					}
 				}
 			}

@@ -481,44 +481,42 @@ Configuration priority: `--flag` > environment variable > `~/.agr/config.toml` >
 
 Use `--debug` to write a bounded, redacted error chain to stderr. JSON stdout
 remains one envelope; NDJSON streams retain their single terminal event. Unknown
-errors still show `INTERNAL_ERROR` in normal output. Diagnostics redact active
-SecretId/SecretKey/Token values, Authorization/Cookie headers, signed URL query
-parameters, and URL passwords before writing to stderr. No stack dump or upload
-is performed.
+errors still show `INTERNAL_ERROR` in normal output. No stack dump or upload is
+performed.
 
-`--debug` (or `AGR_DEBUG=1`) also saves full redacted diagnostics and stderr to
+Redaction replaces credential values only and never removes surrounding text,
+so the failure reason stays intact. It replaces, by exact value (raw and
+URL-encoded), the active SecretId/SecretKey/Token and the data-plane/deployment
+access tokens the CLI obtains; the credential after `Bearer`/`Basic` (16 or more
+characters); and URL passwords and signed URL query values. Other header values
+are not guessed from text.
+
+`--debug` (or `AGR_DEBUG=1`) also saves full redacted diagnostics and a copy of stderr to
 `~/.agr/logs/agr-<UTC timestamp>-<unique suffix>.log`. Use
 `--debug-log ./logs/agr.log` to enable debug and append to a specified file.
 Successful and failed commands print `Debug log: <absolute path>` to stderr;
 logging failures produce a warning without replacing the command's result or
 exit code.
 
-The file is redacted line by line. A line longer than 64 KiB keeps its redacted
-prefix up to the last whitespace before the limit, followed by
-`[REDACTED: line exceeded 64 KiB]`; the rest of that line is omitted from the
-file. A quoted header or Cookie value without its closing quote on the same
-line, including one cut by truncation, is redacted to the end of that line;
-following lines are not recognized as part of it. The original program stderr
-still reaches the terminal immediately and unchanged.
+The copied stderr, including remote program output, is written in full with no
+line limit; only the known credential values above are replaced, wherever
+output chunks split them. Remote programs' own secrets are not known to the CLI
+and are not redacted, as with `kubectl logs`. The original program stderr still
+reaches the terminal immediately and unchanged.
 
 Default log files are created per process and are not automatically rotated or
 deleted. `AGR_DEBUG=1` also reaches background mobile tunnel processes through
 their inherited environment, so those processes create their own log files.
-Orderly shutdown writes the last unterminated line; forced termination may lose
-it (at most 64 KiB). Remove old files when they are no longer needed.
+If output ends with a fragment that may start a known credential, that fragment
+is written as `[REDACTED]`. Remove old files when they are no longer needed.
 
 Redaction also applies to ordinary text errors and JSON/NDJSON `Failure` fields,
 including nested `Details`, without truncating ordinary error strings. Only
-terminal debug diagnostics are capped at 8 KiB plus a UTF-8-safe truncation marker. Header
-redaction preserves surrounding status text, and URL redaction changes only
-passwords and sensitive query values, even when unrelated URL escapes are malformed.
-Generic `Details.token`/`signature`/`sig` fields are not hidden by name alone;
-known credential values and explicit credential/header fields are still redacted.
-Bare Cookie values are hidden only at a header line start or in a quoted object
-field, so prose such as `failed to set cookie: permission denied` stays readable.
-In a marshaled or printed header map (JSON or Go's `Key:[v1 v2]` form), every
-Authorization/Cookie value, including each list element, is replaced whole;
-empty and null values stay as they are, and neighbouring fields are kept.
+terminal debug diagnostics are capped at 8 KiB plus a UTF-8-safe truncation marker.
+URL redaction changes only passwords and sensitive query values, even when
+unrelated URL escapes are malformed. `Details` fields named after credentials or
+headers (such as `Authorization`, `Cookie`, `SecretKey`) are replaced; generic
+`Details.token`/`signature`/`sig` fields are not hidden by name alone.
 
 For foreground mobile tunnel failures, token acquisition retains cloud API
 classification and RequestId; timeouts and cancellations retain their own kinds.

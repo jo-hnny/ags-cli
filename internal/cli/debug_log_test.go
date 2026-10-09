@@ -247,64 +247,102 @@ func TestDebugLogGlobalSchemaAndEarlyArguments(t *testing.T) {
 	}
 }
 
-func TestDebugLogRedactsAcrossWriteBoundaries(t *testing.T) {
+// useTestSecrets installs configured and runtime-registered test credentials.
+func useTestSecrets(t *testing.T) {
+	t.Helper()
 	oldID, oldKey, oldToken := secretID, secretKey, tokenFlag
+	runtimeSecrets.Lock()
+	oldRuntime := runtimeSecrets.values
+	runtimeSecrets.values = nil
+	runtimeSecrets.Unlock()
+	t.Cleanup(func() {
+		secretID, secretKey, tokenFlag = oldID, oldKey, oldToken
+		runtimeSecrets.Lock()
+		runtimeSecrets.values = oldRuntime
+		runtimeSecrets.Unlock()
+	})
 	secretID, secretKey, tokenFlag = "test-access-id", "active-private/key", "test-session-token"
-	t.Cleanup(func() { secretID, secretKey, tokenFlag = oldID, oldKey, oldToken })
-	for _, raw := range []string{
-		"Authorization: Bearer split-secret\n",
-		"Proxy-Authorization: Basic split-secret\n",
-		`{"Authorization": "Bearer split-secret"}` + "\n",
-		"Authorization: Digest username=\"user\", response=\"split-secret\"; upstream returned 403\n",
-		"Cookie: session=split-cookie; other=second-secret\n",
-		"Cookie: session=\"split-cookie\" ordinary text\n",
-		"Set-Cookie: split-cookie\n",
-		`headers: {"Cookie":["session=\"split-cookie\""],"Set-Cookie":["a=split-cookie","b=second-secret"]}` + "\n",
-		"credentials: " + secretID + " " + secretKey + " " + tokenFlag + "\n",
-		"escaped credential: " + url.QueryEscape(secretKey) + "\n",
-		"request https://user:private-pass@example.invalid/path?%53ignature=private-signature&keep=visible\n",
-		"错误信息：凭据 " + tokenFlag + "；原因保持可见\n",
-		"failed to set authorization: permission denied by policy\nfailed to set cookie: permission denied\n",
+	MaskSecret("runtime-access-token-value")
+}
+
+var testSecrets = []string{"test-access-id", "active-private/key", url.QueryEscape("active-private/key"), "test-session-token", "runtime-access-token-value"}
+
+// The file contract: stderr is copied unchanged except that known secrets are
+// replaced, wherever transport chunks split them. Nothing else is dropped.
+func TestDebugLogMasksKnownSecretsAcrossWriteBoundaries(t *testing.T) {
+	useTestSecrets(t)
+	for _, tc := range []struct{ raw, want string }{
+		{"credentials: test-access-id active-private/key test-session-token\n", "credentials: [REDACTED] [REDACTED] [REDACTED]\n"},
+		{"escaped credential: " + url.QueryEscape("active-private/key") + "\n", "escaped credential: [REDACTED]\n"},
+		{"remote stderr: token=runtime-access-token-value; upstream returned 403\n", "remote stderr: token=[REDACTED]; upstream returned 403\n"},
+		{"错误信息：凭据 test-session-token；原因保持可见", "错误信息：凭据 [REDACTED]；原因保持可见"},
+		{"Authorization: can't parse header\nreason: upstream returned 403\n", "Authorization: can't parse header\nreason: upstream returned 403\n"},
+		{`{"Cookie":["session=\"opaque\""],"Reason":["upstream returned 403"]}` + "\n", `{"Cookie":["session=\"opaque\""],"Reason":["upstream returned 403"]}` + "\n"},
+		{"test-test-session-token test-", "test-[REDACTED] [REDACTED]"}, // A final fragment that may start a secret is not written.
 	} {
-		for _, raw := range []string{raw, strings.TrimSuffix(raw, "\n"), raw + "next ordinary line\n"} {
-			want := redactDebugLogLines(raw)
-			for _, secret := range []string{"split-secret", "split-cookie", "second-secret", "private-pass", "private-signature", secretID, secretKey, tokenFlag, url.QueryEscape(secretKey)} {
-				if strings.Contains(want, secret) {
-					t.Fatalf("line redaction leaked %q: %q", secret, want)
-				}
-			}
-			for cut := range len(raw) + 1 {
-				if got := captureDebugLogChunks(t, []string{raw[:cut], raw[cut:]}); got != want {
-					t.Fatalf("redaction changed at split %d: got %q, want %q", cut, got, want)
-				}
-			}
-			var chunks []string
-			for i := range len(raw) {
-				chunks = append(chunks, raw[i:i+1])
-			}
-			if got := captureDebugLogChunks(t, chunks); got != want {
-				t.Fatalf("bytewise redaction changed: got %q, want %q", got, want)
+		for cut := range len(tc.raw) + 1 {
+			if got := captureDebugLogChunks(t, []string{tc.raw[:cut], tc.raw[cut:]}); got != tc.want {
+				t.Fatalf("split %d: got %q, want %q", cut, got, tc.want)
 			}
 		}
-	}
-	// A long line must remain complete, including a final line without newline.
-	raw := strings.Repeat("错", 6000) + "\nAuthorization: Bearer split-secret"
-	var chunks []string
-	for i := range len(raw) {
-		chunks = append(chunks, raw[i:i+1])
-	}
-	if got := captureDebugLogChunks(t, chunks); got != redactDebugLogLines(raw) {
-		t.Fatal("long diagnostic or unterminated tail was lost")
+		var chunks []string
+		for i := range len(tc.raw) {
+			chunks = append(chunks, tc.raw[i:i+1])
+		}
+		if got := captureDebugLogChunks(t, chunks); got != tc.want {
+			t.Fatalf("bytewise: got %q, want %q", got, tc.want)
+		}
 	}
 }
 
-// The file contract: every line is redacted on its own, regardless of chunking.
-func redactDebugLogLines(raw string) string {
-	var out strings.Builder
-	for _, line := range strings.SplitAfter(raw, "\n") {
-		out.WriteString(redactSensitive(line))
+func TestDebugLogKeepsLongLinesWhole(t *testing.T) {
+	useTestSecrets(t)
+	long := strings.Repeat("长", 50000) + " test-session-token " + strings.Repeat("x", 200000)
+	for _, raw := range []string{long + "\nnext\n", long} {
+		want := strings.Replace(raw, "test-session-token", "[REDACTED]", 1)
+		for _, size := range []int{1, 7, 4096, len(raw)} {
+			var chunks []string
+			for remaining := raw; remaining != ""; {
+				n := min(size, len(remaining))
+				chunks = append(chunks, remaining[:n])
+				remaining = remaining[n:]
+			}
+			if got := captureDebugLogChunks(t, chunks); got != want {
+				t.Fatalf("chunk size %d: got length %d, want length %d", size, len(got), len(want))
+			}
+		}
 	}
-	return out.String()
+}
+
+func TestDebugLogHoldsOnlyPossibleSecretPrefixes(t *testing.T) {
+	useTestSecrets(t)
+	l := newStreamTestLog(t)
+	l.writeFile("ordinary output without newline ")
+	if l.pending != "" {
+		t.Fatalf("ordinary text held back: %q", l.pending)
+	}
+	l.writeFile("prefix test-sess")
+	if l.pending != "test-sess" {
+		t.Fatalf("pending=%q", l.pending)
+	}
+	l.writeFile("ion-token suffix\n")
+	longest := 0
+	for _, secret := range testSecrets {
+		longest = max(longest, len(secret))
+	}
+	for range 10000 {
+		l.writeFile(strings.Repeat("x", 99) + "runtime-access-token")
+		if len(l.pending) >= longest {
+			t.Fatalf("pending exceeds the longest secret: %d", len(l.pending))
+		}
+	}
+	contents, err := os.ReadFile(l.path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(string(contents), "ordinary output without newline prefix [REDACTED] suffix\n") {
+		t.Fatalf("file=%.80q", contents)
+	}
 }
 
 func captureDebugLogChunks(t *testing.T, chunks []string) string {
@@ -336,84 +374,6 @@ func captureDebugLogChunks(t *testing.T, chunks []string) string {
 		t.Fatal("metadata or successful close hint missing")
 	}
 	return body
-}
-
-func TestDebugLogClosedQuotedAuthorizationFlushes(t *testing.T) {
-	for _, header := range []string{
-		"Authorization: \"private-token\"\n",
-		"Proxy-Authorization: 'private-token'\n",
-		`{"Authorization": "Bearer private-token"}` + "\n",
-	} {
-		t.Run(header, func(t *testing.T) {
-			l := newStreamTestLog(t)
-			followup := "ordinary follow-up\nordinary \"unfinished prose\n"
-			l.writeFile(header + followup)
-			contents, err := os.ReadFile(l.path)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if l.pending.Len() != 0 || string(contents) != redactSensitive(header)+followup {
-				t.Fatalf("complete header held until close: pending=%d, file=%q", l.pending.Len(), contents)
-			}
-		})
-	}
-}
-
-func TestDebugLogLongLines(t *testing.T) {
-	oldToken := tokenFlag
-	tokenFlag = "private-session-token"
-	t.Cleanup(func() { tokenFlag = oldToken })
-	fill := strings.Repeat("x", debugLogLineLimit-10)
-	header := strings.Repeat("x", 100) + " Authorization: Bearer private-value"
-	for _, tc := range []struct{ name, raw, want string }{
-		{"at limit", strings.Repeat("y", debugLogLineLimit) + "\nnext\n", strings.Repeat("y", debugLogLineLimit) + "\nnext\n"},
-		{"ordinary overflow", fill + " " + strings.Repeat("z", 100) + "\nnext\n", fill + " " + debugLogOverflowMarker + "\nnext\n"},
-		{"credential split by cut", fill + " Bearer=" + tokenFlag + " tail\nnext\n", fill + " " + debugLogOverflowMarker + "\nnext\n"},
-		{"credential before cut", header + " " + strings.Repeat("w", debugLogLineLimit) + "\nnext\n", redactSensitive(header) + " " + debugLogOverflowMarker + "\nnext\n"},
-		{"quoted header split by cut", `Authorization: Bearer "private-value ` + strings.Repeat("w ", debugLogLineLimit) + "tail\"\nnext\n", "Authorization: [REDACTED] " + debugLogOverflowMarker + "\nnext\n"},
-		{"quoted cookie split by cut", `Cookie: session="private-value ` + strings.Repeat("w ", debugLogLineLimit) + "tail\"\nnext\n", "Cookie: session=[REDACTED] " + debugLogOverflowMarker + "\nnext\n"},
-		{"no whitespace", strings.Repeat("q", debugLogLineLimit+1) + "\nnext\n", debugLogOverflowMarker + "\nnext\n"},
-		{"unterminated", fill + " " + strings.Repeat("z", 100), fill + " " + debugLogOverflowMarker},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			for _, size := range []int{len(tc.raw), debugLogLineLimit, 100} {
-				var chunks []string
-				for remaining := tc.raw; remaining != ""; {
-					n := min(size, len(remaining))
-					chunks = append(chunks, remaining[:n])
-					remaining = remaining[n:]
-				}
-				got := captureDebugLogChunks(t, chunks)
-				if got != tc.want {
-					t.Fatalf("chunk size %d: got length %d (%.80q...), want length %d", size, len(got), got, len(tc.want))
-				}
-				for _, secret := range []string{"private-value", "private-session-token", "priv"} {
-					if strings.Contains(got, secret) {
-						t.Fatalf("chunk size %d leaked %q", size, secret)
-					}
-				}
-			}
-		})
-	}
-}
-
-func TestDebugLogPendingIsBounded(t *testing.T) {
-	l := newStreamTestLog(t)
-	chunk := strings.Repeat("x", 99) + "Cookie: \""
-	for range 20000 {
-		l.writeFile(chunk)
-		if l.pending.Len() > debugLogLineLimit {
-			t.Fatalf("unbounded pending: %d", l.pending.Len())
-		}
-	}
-	l.writeFile("\nnext ordinary line\n")
-	contents, err := os.ReadFile(l.path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.HasSuffix(string(contents), debugLogOverflowMarker+"\nnext ordinary line\n") {
-		t.Fatalf("over-limit line did not recover at its newline: %.80q", contents)
-	}
 }
 
 func newStreamTestLog(t *testing.T) *debugLog {
@@ -460,55 +420,40 @@ func TestDebugLogConcurrentClose(t *testing.T) {
 	}
 }
 
-func BenchmarkDebugLogUnfinishedCookie(b *testing.B) {
-	file, err := os.OpenFile(os.DevNull, os.O_WRONLY, 0)
-	if err != nil {
-		b.Fatal(err)
-	}
-	defer func() {
-		if err := file.Close(); err != nil {
-			b.Error(err)
-		}
-	}()
-	line := strings.Repeat("x", 99) + "\n"
-	b.ReportAllocs()
-	b.SetBytes(14000 * int64(len(line)))
-	for b.Loop() {
-		l := &debugLog{file: file, terminal: io.Discard}
-		l.writeFile("Cookie: \"unterminated\n")
-		for range 14000 {
-			l.writeFile(line)
-		}
-	}
-}
-
 func TestDebugLogPendingLifecycle(t *testing.T) {
-	for _, fail := range []bool{false, true} {
-		t.Run(map[bool]string{false: "mixed-writers", true: "close-write-failure"}[fail], func(t *testing.T) {
+	for _, tc := range []struct{ name, tail, want string }{
+		{"mixed-writers", "ion-token\n", "credential: [REDACTED]\n"},
+		{"ends-inside-secret", "", "credential: [REDACTED]"},
+		{"close-write-failure", "", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			useTestSecrets(t)
 			oldIO, oldDebug, oldPath := ios, debugFlag, debugLogFlag
 			t.Cleanup(func() { closeDebugLog(); ios, debugFlag, debugLogFlag = oldIO, oldDebug, oldPath })
 			var stderr *bytes.Buffer
 			ios, _, _, stderr = iostreams.Test()
 			debugFlag, debugLogFlag = true, filepath.Join(t.TempDir(), "run.log")
 			startDebugLog()
-			if activeDebugLog.Load() == nil {
+			writer := activeDebugLog.Load()
+			if writer == nil {
 				t.Fatal("log did not start")
 			}
-			writer := activeDebugLog.Load()
-			if _, err := writer.Write([]byte("Authorization: Bear")); err != nil {
+			if _, err := writer.Write([]byte("credential: test-sess")); err != nil {
 				t.Fatal(err)
 			}
+			fail := tc.name == "close-write-failure"
 			if fail {
 				if err := writer.file.Close(); err != nil {
 					t.Fatal(err)
 				}
-			} else {
-				debugf("er split-secret\n") // Complete stderr using the diagnostic entry point.
+			}
+			if tc.tail != "" {
+				debugf("%s", tc.tail) // Complete stderr using the diagnostic entry point.
 			}
 			closeDebugLog()
 			before := stderr.String()
 			closeDebugLog() // Idempotent: no repeated path or warning.
-			if stderr.String() != before || writer.pending.Len() != 0 {
+			if stderr.String() != before || writer.pending != "" {
 				t.Fatal("close duplicated its output or retained pending secrets")
 			}
 			if fail {
@@ -520,11 +465,12 @@ func TestDebugLogPendingLifecycle(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				if !bytes.Contains(contents, []byte("Authorization: [REDACTED]\n")) || bytes.Contains(contents, []byte("split-secret")) {
-					t.Fatal("mixed writes bypassed the shared redaction buffer")
+				_, body, _ := strings.Cut(string(contents), "\n")
+				if body != tc.want {
+					t.Fatalf("file=%q, want %q", body, tc.want)
 				}
 			}
-			if _, err := writer.Write([]byte("late stderr")); err != nil || writer.pending.Len() != 0 || !strings.HasSuffix(stderr.String(), "late stderr") {
+			if _, err := writer.Write([]byte("late stderr")); err != nil || writer.pending != "" || !strings.HasSuffix(stderr.String(), "late stderr") {
 				t.Fatal("closed writer retained new data or changed terminal stderr")
 			}
 		})

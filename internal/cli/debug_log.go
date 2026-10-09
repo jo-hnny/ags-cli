@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"bytes"
 	"fmt"
 	"io"
 	"log"
@@ -20,17 +19,12 @@ type debugLog struct {
 	file     *os.File
 	path     string
 	err      error
-	pending  bytes.Buffer // the current unterminated line, at most debugLogLineLimit bytes
-	skipping bool         // discarding the rest of an over-limit line
+	pending  string // a tail that may be the start of a known secret
 	terminal io.Writer
 	logger   io.Writer
 }
 
 var activeDebugLog atomic.Pointer[debugLog]
-
-const debugLogLineLimit = 64 << 10
-
-const debugLogOverflowMarker = "[REDACTED: line exceeded 64 KiB]"
 
 func startDebugLog() {
 	if !debugFlag || activeDebugLog.Load() != nil {
@@ -76,55 +70,38 @@ func openDebugLog() (*os.File, error) {
 	return os.CreateTemp(dir, "agr-"+time.Now().UTC().Format("20060102T150405")+"-*.log")
 }
 
-// writeFile is called with mu held. A Write is a transport chunk, so each line
-// is buffered and redacted as a whole once its newline arrives (or on close).
-// Values spanning lines are not recognized. File failures never change results.
+// writeFile is called with mu held. Stderr is copied unchanged except for known
+// secrets. A Write is a transport chunk that may split a secret, so only a tail
+// that could still become one is held back (bounded by the longest secret).
+// File failures never change results.
 func (l *debugLog) writeFile(text string) {
-	for text != "" && l.file != nil && l.err == nil {
-		chunk, rest, complete := strings.Cut(text, "\n")
-		text = rest
-		if l.skipping {
-			if complete {
-				l.skipping = false
-				l.write("\n")
-			}
-			continue
-		}
-		if l.pending.Len()+len(chunk) > debugLogLineLimit {
-			l.pending.WriteString(chunk[:debugLogLineLimit-l.pending.Len()])
-			l.writeTruncatedLine()
-			l.skipping = !complete
-			if complete {
-				l.write("\n")
-			}
-			continue
-		}
-		l.pending.WriteString(chunk)
-		if complete {
-			l.pending.WriteByte('\n')
-			l.flushLine()
-		}
+	if l.file == nil {
+		return
 	}
+	secrets := knownSecrets()
+	text = l.pending + text
+	hold := secretPrefixLen(text, secrets)
+	l.pending = text[len(text)-hold:]
+	l.write(maskSecrets(text[:len(text)-hold], secrets))
 }
 
-func (l *debugLog) flushLine() {
-	l.write(redactSensitive(l.pending.String()))
-	l.pending.Reset()
-}
-
-// The cut may split a credential, so drop the token it lands in; the rest of
-// the line is discarded.
-func (l *debugLog) writeTruncatedLine() {
-	text := l.pending.String()
-	l.pending.Reset()
-	if cut := strings.LastIndexAny(text, " \t"); cut > 0 {
-		l.write(redactSensitive(text[:cut]) + " ")
+// secretPrefixLen returns the length of the longest suffix of text that is a
+// proper prefix of a secret.
+func secretPrefixLen(text string, secrets []string) int {
+	longest := 0
+	for _, secret := range secrets {
+		for n := min(len(secret)-1, len(text)); n > longest; n-- {
+			if strings.HasSuffix(text, secret[:n]) {
+				longest = n
+				break
+			}
+		}
 	}
-	l.write(debugLogOverflowMarker)
+	return longest
 }
 
 func (l *debugLog) write(text string) {
-	if l.err == nil {
+	if l.err == nil && text != "" {
 		_, l.err = io.WriteString(l.file, text)
 	}
 }
@@ -141,7 +118,7 @@ func writeDebugDiagnostic(terminal, full string) {
 	if l := activeDebugLog.Load(); l != nil {
 		l.mu.Lock()
 		defer l.mu.Unlock()
-		l.writeFile(full)
+		l.writeFile(redactSensitive(full))
 		fmt.Fprint(l.terminal, redactDiagnostic(terminal))
 		return
 	}
@@ -158,10 +135,11 @@ func closeDebugLog() {
 	log.SetOutput(l.logger)
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	if l.pending.Len() > 0 {
-		l.flushLine()
+	// Output ended inside what may be a secret; do not write its prefix.
+	if l.pending != "" {
+		l.write("[REDACTED]")
+		l.pending = ""
 	}
-	l.pending.Reset()
 	if err := l.file.Close(); err != nil && l.err == nil {
 		l.err = err
 	}

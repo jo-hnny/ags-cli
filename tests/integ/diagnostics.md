@@ -19,23 +19,27 @@ agr --debug-log ./logs/agr.log instance get ssi-example -o json
 ```
 
 The file contains full, redacted debug messages and a copy of stderr. The 8 KiB
-limit applies only to terminal diagnostics; the file only bounds single lines
-(see below). Stdout and remote-program data keep their existing contracts. Both successful and failed exits print `Debug log:`
+limit applies only to terminal diagnostics; the file has no length limit.
+Stdout and remote-program data keep their existing contracts. Both successful and failed exits print `Debug log:`
 with the file path to stderr. Error exits close the file explicitly before
 `os.Exit`. Log creation/write failures emit a warning without replacing the
 original command result or claiming a complete log. Existing custom files are
 appended, not truncated. New log files use mode 0600 and directories use 0700.
 `agr schema -o json` exposes these options in `Data.GlobalFlags`.
 
-File-side redaction buffers stderr by line: transport chunks may split a
-credential or UTF-8 character, so each line is redacted as a whole once its
-newline arrives, and closing the log writes the final no-newline line. A line
-over 64 KiB keeps its redacted prefix up to the last whitespace before the limit
-plus a marker, and the rest of that line is dropped, so memory and work stay
-bounded. A quoted header/Cookie value whose closing quote is missing on its
-line (including one cut by truncation) is redacted to the end of the line;
-following lines are not treated as part of it. Business stderr is still
-forwarded immediately and unchanged.
+Redaction replaces credential values only and never removes surrounding text:
+diagnostics exist to keep the failure reason. Text formats are not parsed.
+Credentials the CLI holds (active SecretId/SecretKey/Token and data-plane or
+deployment access tokens registered when obtained) are replaced by exact value,
+raw and URL-encoded. Diagnostics and failures also replace the credential after
+`Bearer`/`Basic`, URL passwords and signed query values, and credential-named
+`Details` fields.
+
+The copied stderr is written unchanged except for known values. Transport chunks
+may split a value, so the writer holds back only a tail that could still become
+one (at most the longest value's length); there is no line buffering or line
+limit. If output ends inside such a tail, it is written as `[REDACTED]`.
+Business stderr is still forwarded immediately and unchanged.
 
 ## Exit-path audit
 
@@ -76,7 +80,10 @@ new CLI wrappers on their existing paths.
   status preservation and omission of its response body.
 - A silent loopback peer drives real handshake timeouts; whether the socket
   deadline or the context timer fires first, the probe reports a timeout.
-- Wrapped classification, cloud RequestId, timeout/cancellation, credential/header/
+- Wrapped classification, cloud RequestId, timeout/cancellation, credential/
   signed-URL redaction and non-mutating failure sanitization have local tests.
+- Redaction tests assert exact output: printed and marshaled `http.Header`
+  values (nil, empty, single, multi) keep every neighbouring field in failures,
+  stderr and the log; known values are replaced at every write split.
 
 No credentialed live cloud or real mobile-device verification is claimed here.
