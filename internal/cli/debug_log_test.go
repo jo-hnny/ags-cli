@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"log"
+	"math/rand/v2"
 	"net/url"
 	"os"
 	"os/exec"
@@ -291,6 +292,66 @@ func TestDebugLogMasksKnownSecretsAcrossWriteBoundaries(t *testing.T) {
 		}
 		if got := captureDebugLogChunks(t, chunks); got != tc.want {
 			t.Fatalf("bytewise: got %q, want %q", got, tc.want)
+		}
+	}
+}
+
+// Any split of the stream gives the same file as one write, and no registered
+// value survives, including values that overlap themselves or each other.
+func TestDebugLogChunkingEquivalence(t *testing.T) {
+	useTestSecrets(t)
+	selfOverlap, left, right := "ABCD1234567890ABCD", "cross-left-XYZW", "XYZW-cross-right"
+	secrets := []string{selfOverlap, left, right}
+	for _, secret := range secrets {
+		MaskSecret(secret)
+	}
+	for _, tc := range []struct{ raw, want string }{
+		{selfOverlap + "\n", "[REDACTED]\n"},
+		{selfOverlap, "[REDACTED]"},
+		{"x" + selfOverlap + "1234567890ABCD tail\n", "x[REDACTED] tail\n"},
+		{left + "-cross-right\n", "[REDACTED]\n"},
+		{left + "\n" + right + "\n", "[REDACTED]\n[REDACTED]\n"},
+		{"ordinary ABCD and XYZW text\n", "ordinary ABCD and XYZW text\n"},
+		{"ends inside ABCD12", "ends inside [REDACTED]"},
+	} {
+		if got := captureDebugLogChunks(t, []string{tc.raw}); got != tc.want {
+			t.Fatalf("single write %q: got %q, want %q", tc.raw, got, tc.want)
+		}
+		for cut := range len(tc.raw) + 1 {
+			if got := captureDebugLogChunks(t, []string{tc.raw[:cut], tc.raw[cut:]}); got != tc.want {
+				t.Fatalf("%q split %d: got %q, want %q", tc.raw, cut, got, tc.want)
+			}
+		}
+		var chunks []string
+		for i := range len(tc.raw) {
+			chunks = append(chunks, tc.raw[i:i+1])
+		}
+		if got := captureDebugLogChunks(t, chunks); got != tc.want {
+			t.Fatalf("%q bytewise: got %q, want %q", tc.raw, got, tc.want)
+		}
+	}
+	rng := rand.New(rand.NewPCG(138, 139))
+	pieces := append([]string{"ABCD", "XYZW", "1234567890", "cross-", "-", " ", "\n"}, secrets...)
+	for range 300 {
+		var raw strings.Builder
+		for range rng.IntN(12) + 1 {
+			raw.WriteString(pieces[rng.IntN(len(pieces))])
+		}
+		text := raw.String()
+		want := captureDebugLogChunks(t, []string{text})
+		var chunks []string
+		for remaining := text; remaining != ""; {
+			n := min(rng.IntN(8)+1, len(remaining))
+			chunks = append(chunks, remaining[:n])
+			remaining = remaining[n:]
+		}
+		if got := captureDebugLogChunks(t, chunks); got != want {
+			t.Fatalf("chunks %q: got %q, want %q", chunks, got, want)
+		}
+		for _, secret := range secrets {
+			if strings.Contains(want, secret) {
+				t.Fatalf("%q leaked %q: %q", text, secret, want)
+			}
 		}
 	}
 }

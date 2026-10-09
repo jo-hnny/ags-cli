@@ -35,10 +35,14 @@ raw and URL-encoded. Diagnostics and failures also replace the credential after
 `Bearer`/`Basic`, URL passwords and signed query values, and credential-named
 `Details` fields.
 
-The copied stderr is written unchanged except for known values. Transport chunks
-may split a value, so the writer holds back only a tail that could still become
-one (at most the longest value's length); there is no line buffering or line
-limit. If output ends inside such a tail, it is written as `[REDACTED]`.
+The copied stderr is written unchanged except for known values, and the file
+does not depend on how writes split the stream. Every occurrence of every value
+is found, and overlapping occurrences (of one value or of different values) are
+merged into one `[REDACTED]`. The writer holds back only a tail that could still
+become a value, together with any complete value that crosses into that tail,
+so written bytes are never part of a later match; there is no line buffering or
+line limit. If output ends with a fragment that may start a value, it is written
+as `[REDACTED]`.
 Business stderr is still forwarded immediately and unchanged.
 
 ## Exit-path audit
@@ -85,5 +89,9 @@ new CLI wrappers on their existing paths.
 - Redaction tests assert exact output: printed and marshaled `http.Header`
   values (nil, empty, single, multi) keep every neighbouring field in failures,
   stderr and the log; known values are replaced at every write split.
+- Chunking equivalence: any split of the stream (every two-way split, bytewise,
+  and seeded random chunking) produces the same file as one write, including
+  self-overlapping values, values overlapping each other, and output ending
+  inside a value.
 
 No credentialed live cloud or real mobile-device verification is claimed here.

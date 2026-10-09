@@ -71,8 +71,7 @@ func openDebugLog() (*os.File, error) {
 }
 
 // writeFile is called with mu held. Stderr is copied unchanged except for known
-// secrets. A Write is a transport chunk that may split a secret, so only a tail
-// that could still become one is held back (bounded by the longest secret).
+// secrets, and the result does not depend on how writes split the stream.
 // File failures never change results.
 func (l *debugLog) writeFile(text string) {
 	if l.file == nil {
@@ -80,9 +79,41 @@ func (l *debugLog) writeFile(text string) {
 	}
 	secrets := knownSecrets()
 	text = l.pending + text
-	hold := secretPrefixLen(text, secrets)
-	l.pending = text[len(text)-hold:]
-	l.write(maskSecrets(text[:len(text)-hold], secrets))
+	ranges := secretRanges(text, secrets)
+	// Later bytes can only complete a secret that starts in the held tail. A
+	// complete secret crossing the cut (its suffix also starts a secret) is held
+	// whole, so already written bytes are never part of a later match.
+	cut := len(text) - secretPrefixLen(text, secrets)
+	written := 0
+	for _, r := range ranges {
+		if r[0] < cut && cut < r[1] {
+			cut = r[0]
+		}
+		if r[1] <= cut {
+			written++
+		}
+	}
+	l.pending = text[cut:]
+	l.write(maskRanges(text[:cut], ranges[:written]))
+}
+
+// flushPending writes the held tail at close. A trailing fragment that may be
+// the start of a secret is not written.
+func (l *debugLog) flushPending() {
+	if l.pending == "" {
+		return
+	}
+	secrets := knownSecrets()
+	ranges := secretRanges(l.pending, secrets)
+	start := len(l.pending) - secretPrefixLen(l.pending, secrets)
+	if n := len(ranges); n > 0 {
+		start = max(start, ranges[n-1][1])
+	}
+	if start < len(l.pending) {
+		ranges = append(ranges, [2]int{start, len(l.pending)})
+	}
+	l.write(maskRanges(l.pending, ranges))
+	l.pending = ""
 }
 
 // secretPrefixLen returns the length of the longest suffix of text that is a
@@ -135,11 +166,7 @@ func closeDebugLog() {
 	log.SetOutput(l.logger)
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	// Output ended inside what may be a secret; do not write its prefix.
-	if l.pending != "" {
-		l.write("[REDACTED]")
-		l.pending = ""
-	}
+	l.flushPending()
 	if err := l.file.Close(); err != nil && l.err == nil {
 		l.err = err
 	}

@@ -48,8 +48,7 @@ func MaskSecret(secret string) {
 	}
 }
 
-// knownSecrets returns raw and URL-encoded credential values, longest first so
-// overlapping values are replaced whole.
+// knownSecrets returns the non-empty raw and URL-encoded credential values.
 func knownSecrets() []string {
 	runtimeSecrets.Lock()
 	values := append([]string{secretID, secretKey, tokenFlag, config.GetSecretID(), config.GetSecretKey(), config.GetToken()}, runtimeSecrets.values...)
@@ -62,15 +61,50 @@ func knownSecrets() []string {
 			}
 		}
 	}
-	slices.SortFunc(secrets, func(a, b string) int { return len(b) - len(a) })
 	return secrets
 }
 
 func maskSecrets(text string, secrets []string) string {
+	return maskRanges(text, secretRanges(text, secrets))
+}
+
+// secretRanges returns the byte ranges covered by any occurrence of any secret,
+// in order. Overlapping occurrences (of one value or of different values) are
+// merged so every covered byte is replaced.
+func secretRanges(text string, secrets []string) [][2]int {
+	var found [][2]int
 	for _, secret := range secrets {
-		text = strings.ReplaceAll(text, secret, "[REDACTED]")
+		for start := 0; ; start++ {
+			i := strings.Index(text[start:], secret)
+			if i < 0 {
+				break
+			}
+			start += i
+			found = append(found, [2]int{start, start + len(secret)})
+		}
 	}
-	return text
+	slices.SortFunc(found, func(a, b [2]int) int { return a[0] - b[0] })
+	var merged [][2]int
+	for _, r := range found {
+		if n := len(merged); n > 0 && r[0] < merged[n-1][1] {
+			merged[n-1][1] = max(merged[n-1][1], r[1])
+		} else {
+			merged = append(merged, r)
+		}
+	}
+	return merged
+}
+
+func maskRanges(text string, ranges [][2]int) string {
+	var out strings.Builder
+	last := 0
+	for _, r := range ranges {
+		out.WriteString(text[last:r[0]])
+		out.WriteString("[REDACTED]")
+		last = r[1]
+	}
+	out.WriteString(text[last:])
+	return out.String()
 }
 
 // Redact before truncating: truncation must not leave a partial credential.
