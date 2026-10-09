@@ -18,20 +18,22 @@ agr --debug instance get ssi-example
 agr --debug-log ./logs/agr.log instance get ssi-example -o json
 ```
 
-The file contains full, redacted debug messages and a copy of stderr. Length
-limits apply only to terminal diagnostics; stdout and remote-program data keep
-their existing contracts. Both successful and failed exits print `Debug log:`
+The file contains full, redacted debug messages and a copy of stderr. The 8 KiB
+limit applies only to terminal diagnostics; the file only bounds single lines
+(see below). Stdout and remote-program data keep their existing contracts. Both successful and failed exits print `Debug log:`
 with the file path to stderr. Error exits close the file explicitly before
 `os.Exit`. Log creation/write failures emit a warning without replacing the
 original command result or claiming a complete log. Existing custom files are
 appended, not truncated. New log files use mode 0600 and directories use 0700.
 `agr schema -o json` exposes these options in `Data.GlobalFlags`.
 
-File-side redaction treats stderr as a continuous byte stream: transport chunks
-may split a credential or UTF-8 character. Complete safe lines are written while
-unfinished headers, quoted values and cross-line credentials remain buffered;
-closing the log redacts and writes the remaining tail, including no-newline
-output. Business stderr is still forwarded immediately and unchanged.
+File-side redaction buffers stderr by line: transport chunks may split a
+credential or UTF-8 character, so each line is redacted as a whole once its
+newline arrives, and closing the log writes the final no-newline line. A line
+over 64 KiB keeps its redacted prefix up to the last whitespace before the limit
+plus a marker, and the rest of that line is dropped, so memory and work stay
+bounded. Values spanning lines are not recognized. Business stderr is still
+forwarded immediately and unchanged.
 
 ## Exit-path audit
 

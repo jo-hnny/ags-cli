@@ -211,6 +211,8 @@ func TestRedactionPreservesFailureContext(t *testing.T) {
 		{"failed to set Set-Cookie: permission denied", "failed to set Set-Cookie: permission denied"},
 		{`failed to set "cookie": permission denied`, `failed to set "cookie": permission denied`},
 		{"request headers:\n  Cookie: abc123; upstream returned 403", "request headers:\n  Cookie: [REDACTED]; upstream returned 403"},
+		{"request headers:\n  Authorization: \"abc\nreason: upstream returned 403", "request headers:\n  Authorization: \"[REDACTED]\nreason: upstream returned 403"},
+		{"Authorization: can't parse header\nreason: upstream returned 403", "Authorization: [REDACTED]'t parse header\nreason: upstream returned 403"},
 		{`{"reason":"denied", "Cookie":"abc123"}`, `{"reason":"denied", "Cookie":"[REDACTED]"}`},
 		{"Cookie: abc123", "Cookie: [REDACTED]"},
 		{"Cookie: abc123; upstream returned 403", "Cookie: [REDACTED]; upstream returned 403"},

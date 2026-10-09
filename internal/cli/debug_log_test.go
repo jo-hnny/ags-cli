@@ -214,28 +214,15 @@ func TestDebugLogGlobalSchemaAndEarlyArguments(t *testing.T) {
 
 func TestDebugLogRedactsAcrossWriteBoundaries(t *testing.T) {
 	oldID, oldKey, oldToken := secretID, secretKey, tokenFlag
-	secretID, secretKey, tokenFlag = "test-access-id", "active-private\nkey", "test-session-token"
+	secretID, secretKey, tokenFlag = "test-access-id", "active-private/key", "test-session-token"
 	t.Cleanup(func() { secretID, secretKey, tokenFlag = oldID, oldKey, oldToken })
 	for _, raw := range []string{
 		"Authorization: Bearer split-secret\n",
 		"Proxy-Authorization: Basic split-secret\n",
 		`{"Authorization": "Bearer split-secret"}` + "\n",
-		"Authorization:\nBearer split-secret\n",
-		"Authorization\n:\nBearer\nsplit-secret\n",
-		"Authorization: Bearer \"private\nvalue\"\n",
-		"Authorization: \"\nprivate\nvalue\"\n",
-		"Proxy-Authorization: '\nprivate\nvalue'\n",
-		"Authorization: Digest realm=\"private\nvalue\n",
+		"Authorization: Digest username=\"user\", response=\"split-secret\"; upstream returned 403\n",
 		"Cookie: session=split-cookie; other=second-secret\n",
-		"Cookie:\nsession=split-cookie\n",
-		"Cookie: session=\nsplit-cookie\n",
-		"Set-Cookie: session= \nsplit-cookie\n",
-		"Cookie: session=\"private\nvalue\"\n",
-		"Cookie: first=split-cookie;\nsecond=second-secret\n",
-		"Cookie: first=split-cookie;\nsecond=second-secret ordinary text\n",
-		"Cookie: first=\"private\nvalue\"; ordinary text\n",
-		"Cookie: session=\"private\nvalue\" ordinary text\n",
-		"Cookie:\nsession=split-cookie ordinary text\n",
+		"Cookie: session=\"split-cookie\" ordinary text\n",
 		"Set-Cookie: split-cookie\n",
 		"credentials: " + secretID + " " + secretKey + " " + tokenFlag + "\n",
 		"escaped credential: " + url.QueryEscape(secretKey) + "\n",
@@ -244,9 +231,14 @@ func TestDebugLogRedactsAcrossWriteBoundaries(t *testing.T) {
 		"failed to set authorization: permission denied by policy\nfailed to set cookie: permission denied\n",
 	} {
 		for _, raw := range []string{raw, strings.TrimSuffix(raw, "\n"), raw + "next ordinary line\n"} {
+			want := redactDebugLogLines(raw)
+			for _, secret := range []string{"split-secret", "split-cookie", "second-secret", "private-pass", "private-signature", secretID, secretKey, tokenFlag, url.QueryEscape(secretKey)} {
+				if strings.Contains(want, secret) {
+					t.Fatalf("line redaction leaked %q: %q", secret, want)
+				}
+			}
 			for cut := range len(raw) + 1 {
-				got := captureDebugLogChunks(t, []string{raw[:cut], raw[cut:]})
-				if want := redactSensitive(raw); got != want {
+				if got := captureDebugLogChunks(t, []string{raw[:cut], raw[cut:]}); got != want {
 					t.Fatalf("redaction changed at split %d: got %q, want %q", cut, got, want)
 				}
 			}
@@ -254,7 +246,7 @@ func TestDebugLogRedactsAcrossWriteBoundaries(t *testing.T) {
 			for i := range len(raw) {
 				chunks = append(chunks, raw[i:i+1])
 			}
-			if got, want := captureDebugLogChunks(t, chunks), redactSensitive(raw); got != want {
+			if got := captureDebugLogChunks(t, chunks); got != want {
 				t.Fatalf("bytewise redaction changed: got %q, want %q", got, want)
 			}
 		}
@@ -265,9 +257,18 @@ func TestDebugLogRedactsAcrossWriteBoundaries(t *testing.T) {
 	for i := range len(raw) {
 		chunks = append(chunks, raw[i:i+1])
 	}
-	if got := captureDebugLogChunks(t, chunks); got != redactSensitive(raw) {
+	if got := captureDebugLogChunks(t, chunks); got != redactDebugLogLines(raw) {
 		t.Fatal("long diagnostic or unterminated tail was lost")
 	}
+}
+
+// The file contract: every line is redacted on its own, regardless of chunking.
+func redactDebugLogLines(raw string) string {
+	var out strings.Builder
+	for _, line := range strings.SplitAfter(raw, "\n") {
+		out.WriteString(redactSensitive(line))
+	}
+	return out.String()
 }
 
 func captureDebugLogChunks(t *testing.T, chunks []string) string {
@@ -322,128 +323,58 @@ func TestDebugLogClosedQuotedAuthorizationFlushes(t *testing.T) {
 	}
 }
 
-func TestDebugLogBoundedUnfinishedValues(t *testing.T) {
-	for _, pair := range [][2]string{
-		{"Cookie: session=\"", "\"; other=second-secret ordinary tail\n"},
-		{"Cookie: session=\"Proxy-Authorization: 'private-value' ", "\"; other=second-secret ordinary tail\n"},
-		{"Authorization: \"", "\" ordinary tail\n"},
-		{"Authorization: Bearer \"", "\" ordinary tail\n"},
-		{"Proxy-Authorization: '", "' ordinary tail\n"},
-		{"Authorization: Digest realm=\"", "\", nonce=second-secret; ordinary tail\n"},
-		{`{"Cookie": "session=`, `"} ordinary tail` + "\n"},
+func TestDebugLogLongLines(t *testing.T) {
+	oldToken := tokenFlag
+	tokenFlag = "private-session-token"
+	t.Cleanup(func() { tokenFlag = oldToken })
+	fill := strings.Repeat("x", debugLogLineLimit-10)
+	header := strings.Repeat("x", 100) + " Authorization: Bearer private-value"
+	for _, tc := range []struct{ name, raw, want string }{
+		{"at limit", strings.Repeat("y", debugLogLineLimit) + "\nnext\n", strings.Repeat("y", debugLogLineLimit) + "\nnext\n"},
+		{"ordinary overflow", fill + " " + strings.Repeat("z", 100) + "\nnext\n", fill + " " + debugLogOverflowMarker + "\nnext\n"},
+		{"credential split by cut", fill + " Bearer=" + tokenFlag + " tail\nnext\n", fill + " " + debugLogOverflowMarker + "\nnext\n"},
+		{"credential before cut", header + " " + strings.Repeat("w", debugLogLineLimit) + "\nnext\n", redactSensitive(header) + " " + debugLogOverflowMarker + "\nnext\n"},
+		{"no whitespace", strings.Repeat("q", debugLogLineLimit+1) + "\nnext\n", debugLogOverflowMarker + "\nnext\n"},
+		{"unterminated", fill + " " + strings.Repeat("z", 100), fill + " " + debugLogOverflowMarker},
 	} {
-		t.Run(pair[0], func(t *testing.T) {
-			l := newStreamTestLog(t)
-			l.writeFile("ordinary prefix\n" + pair[0])
-			line := strings.Repeat("x", 99) + "\n"
-			for range 14000 {
-				if n, err := l.Write([]byte(line)); n != len(line) || err != nil {
-					t.Fatalf("stderr write changed: %d, %v", n, err)
+		t.Run(tc.name, func(t *testing.T) {
+			for _, size := range []int{len(tc.raw), debugLogLineLimit, 100} {
+				var chunks []string
+				for remaining := tc.raw; remaining != ""; {
+					n := min(size, len(remaining))
+					chunks = append(chunks, remaining[:n])
+					remaining = remaining[n:]
 				}
-				if l.pending.Len() > diagnosticPendingLimit || l.pending.Cap() > 2*diagnosticPendingLimit {
-					t.Fatalf("unbounded pending: len=%d cap=%d", l.pending.Len(), l.pending.Cap())
+				got := captureDebugLogChunks(t, chunks)
+				if got != tc.want {
+					t.Fatalf("chunk size %d: got length %d (%.80q...), want length %d", size, len(got), got, len(tc.want))
 				}
-			}
-			// Recovery must use the real closing quote, not the next newline.
-			l.writeFile("private-continuation" + pair[1])
-			l.flush(l.pending.Len())
-			contents, err := os.ReadFile(l.path)
-			if err != nil {
-				t.Fatal(err)
-			}
-			got := string(contents)
-			if !strings.HasPrefix(got, "ordinary prefix\n") || !strings.Contains(got, diagnosticOverflowMarker) || !strings.Contains(got, "ordinary tail") {
-				t.Fatalf("overflow/recovery lost: %.200q", got)
-			}
-			for _, secret := range []string{"xxx", "private-continuation", "second-secret"} {
-				if strings.Contains(got, secret) {
-					t.Fatalf("overflow continuation leaked %q", secret)
+				for _, secret := range []string{"private-value", "private-session-token", "priv"} {
+					if strings.Contains(got, secret) {
+						t.Fatalf("chunk size %d leaked %q", size, secret)
+					}
 				}
 			}
 		})
 	}
 }
 
-func TestDebugLogCloseRedactsUnfinishedQuotes(t *testing.T) {
-	for _, raw := range []string{
-		"Authorization: \"private-value\nprivate-continuation",
-		"Authorization: Digest realm=\"private-value\nprivate-continuation",
-		"Cookie: session=\"private-value\nprivate-continuation",
-	} {
-		got := captureDebugLogChunks(t, []string{raw})
-		if !strings.Contains(got, "[REDACTED]") || strings.Contains(got, "private-value") || strings.Contains(got, "private-continuation") {
-			t.Fatalf("unfinished credential leaked on close: %q", got)
+func TestDebugLogPendingIsBounded(t *testing.T) {
+	l := newStreamTestLog(t)
+	chunk := strings.Repeat("x", 99) + "Cookie: \""
+	for range 20000 {
+		l.writeFile(chunk)
+		if l.pending.Len() > debugLogLineLimit {
+			t.Fatalf("unbounded pending: %d", l.pending.Len())
 		}
 	}
-}
-
-func TestDebugLogBoundedTokensAndURLs(t *testing.T) {
-	for _, pair := range [][2]string{
-		{"Cookie: session=", "; other=second-secret ordinary tail\n"},
-		{"Cookie: session=https://example.invalid/", "; other=second-secret ordinary tail\n"},
-		{"Authorization: Digest realm=https://example.invalid/", ", nonce=second-secret; ordinary tail\n"},
-		{"Cookie: ", " ordinary tail\n"},
-		{"Authorization: Bearer ", " ordinary tail\n"},
-		{"request https://user:", "@example.invalid/?token=second-secret ordinary tail\n"},
-		{"request https://example.invalid/?%53ignature=", "&keep=visible ordinary tail\n"},
-	} {
-		l := newStreamTestLog(t)
-		l.writeFile("ordinary prefix\n" + pair[0])
-		for range 2000 {
-			l.writeFile(strings.Repeat("x", 100))
-			if l.pending.Len() > diagnosticPendingLimit {
-				t.Fatal("unbounded token pending")
-			}
-		}
-		l.writeFile("private-continuation" + pair[1])
-		l.flush(l.pending.Len())
-		contents, err := os.ReadFile(l.path)
-		if err != nil {
-			t.Fatal(err)
-		}
-		got := string(contents)
-		if !strings.HasPrefix(got, "ordinary prefix\n") || !strings.Contains(got, "ordinary tail") || !strings.Contains(got, diagnosticOverflowMarker) || strings.Contains(got, "xxx") || strings.Contains(got, "private-continuation") || strings.Contains(got, "second-secret") {
-			t.Fatalf("overflow token %q did not recover safely: %.200q", pair[0], got)
-		}
-		raw := "ordinary prefix\n" + pair[0] + strings.Repeat("x", 200000) + "private-continuation" + pair[1]
-		for _, chunks := range [][]string{
-			{raw},
-			{raw[:diagnosticPendingLimit-1], raw[diagnosticPendingLimit-1 : diagnosticPendingLimit+1], raw[diagnosticPendingLimit+1:]},
-		} {
-			got := captureDebugLogChunks(t, chunks)
-			if !strings.Contains(got, "ordinary tail") || strings.Contains(got, "private-continuation") || strings.Contains(got, "second-secret") {
-				t.Fatalf("fragmented overflow %q lost redaction context: %.200q", pair[0], got)
-			}
-		}
+	l.writeFile("\nnext ordinary line\n")
+	contents, err := os.ReadFile(l.path)
+	if err != nil {
+		t.Fatal(err)
 	}
-}
-
-func TestDebugLogLongFragments(t *testing.T) {
-	oldToken := tokenFlag
-	tokenFlag = "private/+token"
-	t.Cleanup(func() { tokenFlag = oldToken })
-	for index, raw := range []string{
-		strings.Repeat("ordinary diagnostics ", 4000),
-		strings.Repeat("错误信息保持完整；", 4000),
-		strings.Repeat("cookie processing succeeded ", 1000) + "\nnext ordinary line\n",
-		`Authorization: "private-token" ` + strings.Repeat("x", 20000) + "\nnext ordinary line\n",
-		strings.Repeat("failed to set cookie: permission denied; ", 1000),
-		strings.Repeat("x", diagnosticPendingLimit-32-1) + tokenFlag + " ordinary tail\n",
-		strings.Repeat("x", diagnosticPendingLimit-32-1) + url.QueryEscape(tokenFlag) + " ordinary tail\n",
-		strings.Repeat("x", diagnosticPendingLimit-32-1) + "Authorization: Bearer private-value\n",
-		strings.Repeat("x", diagnosticPendingLimit-32-1) + "Cookie: private-value\n",
-		strings.Repeat("x", diagnosticPendingLimit-32-1) + "https://user:private-pass@example.invalid/?%53ignature=private-signature&keep=visible\n",
-		"a" + strings.Repeat("1", diagnosticPendingLimit+100) + "://user:private-pass@example.invalid/?token=private-value\n",
-	} {
-		var chunks []string
-		for remaining := raw; remaining != ""; {
-			n := min(100, len(remaining))
-			chunks = append(chunks, remaining[:n])
-			remaining = remaining[n:]
-		}
-		if got, want := captureDebugLogChunks(t, chunks), redactSensitive(raw); got != want {
-			t.Fatalf("case %d: long fragmented output changed: got length %d, want %d", index, len(got), len(want))
-		}
+	if !strings.HasSuffix(string(contents), debugLogOverflowMarker+"\nnext ordinary line\n") {
+		t.Fatalf("over-limit line did not recover at its newline: %.80q", contents)
 	}
 }
 
