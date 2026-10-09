@@ -489,9 +489,22 @@ is performed.
 `--debug` (or `AGR_DEBUG=1`) also saves full redacted diagnostics and stderr to
 `~/.agr/logs/agr-<UTC timestamp>-<unique suffix>.log`. Use
 `--debug-log ./logs/agr.log` to enable debug and append to a specified file.
-The file has no diagnostic length limit. Successful and failed commands print
+Ordinary diagnostics have no file length limit. Successful and failed commands print
 `Debug log: <absolute path>` to stderr; logging failures produce a warning
 without replacing the command's result or exit code.
+
+The redaction buffer is limited to 16 KiB. An unfinished or oversized sensitive
+expression is replaced with `[REDACTED: incomplete diagnostic exceeded 16 KiB]`;
+its continuation remains hidden until a closing quote or token boundary is
+known. If no safe boundary can be established, subsequent file output stays
+hidden for that run. Ordinary long text is saved in full, and the original
+program stderr still reaches the terminal immediately.
+
+Default log files are created per process and are not automatically rotated or
+deleted. `AGR_DEBUG=1` also reaches background mobile tunnel processes through
+their inherited environment, so those processes create their own log files.
+Orderly shutdown flushes pending data; forced termination may lose the pending
+tail (at most 16 KiB). Remove old files when they are no longer needed.
 
 Redaction also applies to ordinary text errors and JSON/NDJSON `Failure` fields,
 including nested `Details`, without truncating ordinary error strings. Only

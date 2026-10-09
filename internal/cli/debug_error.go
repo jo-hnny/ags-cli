@@ -19,27 +19,52 @@ var diagnosticURL = regexp.MustCompile(`[a-zA-Z][a-zA-Z0-9+.-]*://[^\s<>"']+`)
 
 // Header values end at a semicolon in inline diagnostics; do not consume the
 // following operation/status text. Cookie pairs are handled separately.
-var diagnosticHeader = regexp.MustCompile(`(?im)(\b(?:authorization|proxy-authorization)["']?\s*[:=]\s*["']?)(?:(?:Bearer|Basic)\s+(?:"[^"]*"|'[^']*'|[^\s;,"']+)|(?:[^;\r\n"']+|"[^"]*"|'[^']*')+)`)
+var diagnosticHeader = regexp.MustCompile(`(?im)(\b(?:authorization|proxy-authorization)["']?\s*[:=]\s*)(?:"[^"]*"?|'[^']*'?|(?:Bearer|Basic)\s+(?:"[^"]*"?|'[^']*'?|[^\s;,"']+)|(?:[^;\r\n"']+|"[^"]*"?|'[^']*'?)+)`)
 var diagnosticAuthScheme = regexp.MustCompile(`(?i)^(?:Bearer|Basic|Digest|Negotiate|NTLM|(?:AWS4|TC3)-HMAC-SHA256)\s+`)
 var diagnosticCookie = regexp.MustCompile(`(?i)\b(cookie|set-cookie)["']?\s*[:=]\s*["']?`)
-var diagnosticCookiePair = regexp.MustCompile(`^(\s*[^=\s;"']+\s*=\s*)("[^"]*"|[^;\s"']+)(;\s*)?`)
+var diagnosticCookiePair = regexp.MustCompile(`^(\s*[^=\s;"']+\s*=\s*)("[^"]*"?|[^;\s"']+)(;\s*)?`)
 var diagnosticQuery = regexp.MustCompile(`([?&;])([^=&#;]+)=([^&#;]*)`)
 
 // Normal failures redact sensitive values without imposing a diagnostic limit.
 func redactSensitive(text string) string {
+	return redactSensitiveContext(text, diagnosticLineContext{})
+}
+
+// Context preserves header boundaries when a long ordinary line is written in
+// bounded fragments. It never contains credential or diagnostic text.
+type diagnosticLineContext struct {
+	last rune
+	word bool
+}
+
+func redactSensitiveContext(text string, context diagnosticLineContext) string {
 	text = diagnosticURL.ReplaceAllStringFunc(text, redactURL)
 	// Explicit credential schemes can occur inline. Other values need a header
 	// boundary so prose such as "failed to set authorization: denied" survives.
 	headers := diagnosticHeader.FindAllStringSubmatchIndex(text, -1)
 	for i := len(headers) - 1; i >= 0; i-- {
 		match := headers[i]
-		if isDiagnosticHeaderStart(text, match[0]) || diagnosticAuthScheme.MatchString(text[match[3]:match[1]]) {
-			text = text[:match[3]] + "[REDACTED]" + text[match[1]:]
+		if match[0] == 0 && context.word {
+			continue
+		}
+		value := text[match[3]:match[1]]
+		if isDiagnosticHeaderStartContext(text, match[0], context) || diagnosticAuthScheme.MatchString(strings.TrimLeft(value, "\"'")) {
+			clean := "[REDACTED]"
+			if len(value) > 0 && (value[0] == '"' || value[0] == '\'') {
+				clean = string(value[0]) + clean
+				if len(value) > 1 && value[len(value)-1] == value[0] {
+					clean += string(value[0])
+				}
+			}
+			text = text[:match[3]] + clean + text[match[1]:]
 		}
 	}
 	// Work backwards so replacing cookie values does not invalidate offsets.
 	matches := diagnosticCookie.FindAllStringIndex(text, -1)
 	for i := len(matches) - 1; i >= 0; i-- {
+		if matches[i][0] == 0 && context.word {
+			continue
+		}
 		end := matches[i][1]
 		rest := text[end:]
 		var clean strings.Builder
@@ -48,7 +73,7 @@ func redactSensitive(text string) string {
 			if pair == nil {
 				// Bare values need a header boundary; prose such as
 				// "failed to set cookie: permission denied" is not a header.
-				if clean.Len() == 0 && isDiagnosticHeaderStart(text, matches[i][0]) {
+				if clean.Len() == 0 && isDiagnosticHeaderStartContext(text, matches[i][0], context) {
 					n := strings.IndexAny(rest, "; \t\r\n\"',")
 					if n < 0 {
 						n = len(rest)
@@ -83,16 +108,19 @@ func diagnosticSecrets() []string {
 	return []string{secretID, secretKey, tokenFlag, config.GetSecretID(), config.GetSecretKey(), config.GetToken()}
 }
 
-func isDiagnosticHeaderStart(text string, start int) bool {
+func isDiagnosticHeaderStartContext(text string, start int, context diagnosticLineContext) bool {
 	lineStart := strings.LastIndexByte(text[:start], '\n') + 1
+	if lineStart > 0 {
+		context = diagnosticLineContext{}
+	}
 	prefix := strings.TrimSpace(text[lineStart:start])
 	if prefix == "" {
-		return true
+		return context.last == 0
 	}
 	// A quoted field at the start of a line or after an object delimiter.
 	if strings.HasSuffix(prefix, "\"") || strings.HasSuffix(prefix, "'") {
 		prefix = strings.TrimSpace(prefix[:len(prefix)-1])
-		return prefix == "" || strings.HasSuffix(prefix, "{") || strings.HasSuffix(prefix, ",")
+		return prefix == "" && (context.last == 0 || context.last == '{' || context.last == ',') || strings.HasSuffix(prefix, "{") || strings.HasSuffix(prefix, ",")
 	}
 	return false
 }
