@@ -90,6 +90,9 @@ func DomainFlag() string { return domain }
 // CloudEndpointFlag returns the raw --cloud-endpoint value from global flags.
 func CloudEndpointFlag() string { return cloudEndpoint }
 
+// CloudEndpointFlagChanged reports whether --cloud-endpoint was explicitly set, including an empty value.
+func CloudEndpointFlagChanged() bool { return rootCmd.PersistentFlags().Changed("cloud-endpoint") }
+
 // SecretIDFlag returns the raw --secret-id value from global flags.
 func SecretIDFlag() string { return secretID }
 

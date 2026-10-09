@@ -41,6 +41,9 @@ func TestDaemonParent(t *testing.T) {
 			ValidateConfig: func() error { return nil },
 			NewStore:       func() (Store, error) { return &fakeStore{}, nil },
 			StartTunnel: func(ctx context.Context, id string, port int) (TunnelReady, error) {
+				if want := os.Getenv("AGR_TEST_EXPECT_ENDPOINT"); want != "" && config.GetCloudEndpoint() != want {
+					t.Fatalf("parent endpoint = %q, want %q", config.GetCloudEndpoint(), want)
+				}
 				args := append([]string{"-test.run=^TestDaemonChild$", "--"}, tunnelArguments(id, port)...)
 				cmd := exec.Command(os.Args[0], args...)
 				cmd.Env = append(tunnelEnv(), "AGR_TEST_DAEMON_CHILD=1")
@@ -84,8 +87,8 @@ func TestDaemonParent(t *testing.T) {
 		t.Fatal(err)
 	}
 	os.Args = []string{os.Args[0], "instance", "mobile", "connect", "ins-test", "-o", os.Getenv("AGR_TEST_DAEMON_OUTPUT"), "--secret-id", "test-secret-id", "--secret-key", "test-secret-key", "--token", "test-session-token"}
-	if endpoint := os.Getenv("AGR_TEST_ENDPOINT_FLAG"); endpoint != "" {
-		os.Args = append(os.Args, "--cloud-endpoint", endpoint)
+	if endpoint := os.Getenv("AGR_TEST_ENDPOINT_FLAG"); endpoint != "" || os.Getenv("AGR_TEST_ENDPOINT_FLAG_SET") == "1" {
+		os.Args = append(os.Args, "--cloud-endpoint="+endpoint)
 	}
 	if os.Getenv("AGR_TEST_DAEMON_DEBUG") == "1" {
 		os.Args = append(os.Args, "--debug")
@@ -301,13 +304,17 @@ func TestDaemonTextAndSuccessProcess(t *testing.T) {
 func TestDaemonEndpointProcess(t *testing.T) {
 	for _, tc := range []struct {
 		name, file, env, flag, want string
+		emptyFlag                   bool
 	}{
-		{"default", "", "", "", "ags.tencentcloudapi.com"},
-		{"file", "file.example.test", "", "", "file.example.test"},
-		{"env_over_file", "file.example.test", "env.example.test", "", "env.example.test"},
-		{"flag", "", "", "flag.example.test", "flag.example.test"},
-		{"flag_over_file", "file.example.test", "", "flag.example.test", "flag.example.test"},
-		{"flag_over_env_and_file", "file.example.test", "env.example.test", "flag.example.test", "flag.example.test"},
+		{"default", "", "", "", "ags.tencentcloudapi.com", false},
+		{"file", "file.example.test", "", "", "file.example.test", false},
+		{"env_over_file", "file.example.test", "env.example.test", "", "env.example.test", false},
+		{"flag", "", "", "flag.example.test", "flag.example.test", false},
+		{"flag_over_file", "file.example.test", "", "flag.example.test", "flag.example.test", false},
+		{"flag_over_env_and_file", "file.example.test", "env.example.test", "flag.example.test", "flag.example.test", false},
+		{"empty_flag_over_file", "file.example.test", "", "", "ags.tencentcloudapi.com", true},
+		{"empty_flag_over_env", "", "env.example.test", "", "ags.tencentcloudapi.com", true},
+		{"empty_flag_over_env_and_file", "file.example.test", "env.example.test", "", "ags.tencentcloudapi.com", true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			home := t.TempDir()
@@ -321,6 +328,9 @@ func TestDaemonEndpointProcess(t *testing.T) {
 			defer cancel()
 			cmd := exec.CommandContext(ctx, os.Args[0], "-test.run=^TestDaemonParent$")
 			cmd.Env = append(os.Environ(), "HOME="+home, "USERPROFILE="+home, "AGR_TEST_DAEMON_PARENT=1", "AGR_TEST_DAEMON_MODE=handshake", "AGR_TEST_DAEMON_OUTPUT=json", "AGR_TEST_DAEMON_DEBUG=1", "AGR_CLOUD_ENDPOINT="+tc.env, "AGR_TEST_ENDPOINT_FLAG="+tc.flag, "AGR_TEST_EXPECT_ENDPOINT="+tc.want)
+			if tc.emptyFlag {
+				cmd.Env = append(cmd.Env, "AGR_TEST_ENDPOINT_FLAG_SET=1")
+			}
 			var stdout, stderr bytes.Buffer
 			cmd.Stdout, cmd.Stderr = &stdout, &stderr
 			var exit *exec.ExitError

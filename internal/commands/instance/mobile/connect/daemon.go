@@ -46,11 +46,13 @@ func tunnelArguments(instanceID string, port int) []string {
 	}
 	for _, flag := range []struct{ name, value string }{
 		{"--config", cli.CfgFile()}, {"--region", cli.RegionFlag()}, {"--domain", cli.DomainFlag()},
-		{"--cloud-endpoint", cli.CloudEndpointFlag()},
 	} {
 		if flag.value != "" {
 			args = append(args, flag.name, flag.value)
 		}
+	}
+	if cli.CloudEndpointFlagChanged() {
+		args = append(args, "--cloud-endpoint", cli.CloudEndpointFlag())
 	}
 	return args
 }
