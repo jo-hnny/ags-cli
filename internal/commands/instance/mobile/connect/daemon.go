@@ -40,10 +40,9 @@ func startTunnelDaemon(ctx context.Context, instanceID string, port int) (Tunnel
 }
 
 func tunnelArguments(instanceID string, port int) []string {
-	args := []string{"instance", "mobile", "tunnel", instanceID, "--daemon", fmt.Sprintf("--port=%d", port)}
-	if cli.DebugEnabled() {
-		args = append(args, "--debug")
-	}
+	// An explicit value, including false, keeps an inherited AGR_DEBUG from
+	// overriding the parent's effective setting.
+	args := []string{"instance", "mobile", "tunnel", instanceID, "--daemon", fmt.Sprintf("--port=%d", port), fmt.Sprintf("--debug=%t", cli.DebugEnabled())}
 	for _, flag := range []struct{ name, value string }{
 		{"--config", cli.CfgFile()}, {"--region", cli.RegionFlag()}, {"--domain", cli.DomainFlag()},
 	} {

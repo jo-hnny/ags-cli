@@ -99,7 +99,8 @@ new CLI wrappers on their existing paths.
   inside a value.
 - Real parent/child subprocesses run the production connect and tunnel handlers
   against a loopback WebSocket handshake rejection. They verify HTTP 403, custom
-  child classification/exit code, text/JSON framing, debug forwarding, credential
+  child classification/exit code, text/JSON framing, debug forwarding (an
+  explicit `--debug=false` overrides an inherited `AGR_DEBUG=1`), credential
   environment forwarding and redaction in the entire persisted log as well as
   the displayed tail. Redaction covers every credential the child holds: the
   forwarded session credentials and the data-plane token from the tunnel's

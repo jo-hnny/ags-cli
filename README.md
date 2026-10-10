@@ -505,8 +505,10 @@ and are not redacted, as with `kubectl logs`. The original program stderr still
 reaches the terminal immediately and unchanged.
 
 Default log files are created per process and are not automatically rotated or
-deleted. `AGR_DEBUG=1` also reaches background mobile tunnel processes through
-their inherited environment, so those processes create their own log files.
+deleted. Background mobile tunnel processes follow the parent's effective debug
+setting (an explicit `--debug=false` overrides an inherited `AGR_DEBUG=1`) and,
+when enabled, create their own default log files; a `--debug-log` path is not
+shared with them.
 If output ends with a fragment that may start a known credential, that fragment
 is written as `[REDACTED]`. Remove old files when they are no longer needed.
 

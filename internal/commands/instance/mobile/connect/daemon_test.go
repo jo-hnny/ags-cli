@@ -90,8 +90,11 @@ func TestDaemonParent(t *testing.T) {
 	if endpoint := os.Getenv("AGR_TEST_ENDPOINT_FLAG"); endpoint != "" || os.Getenv("AGR_TEST_ENDPOINT_FLAG_SET") == "1" {
 		os.Args = append(os.Args, "--cloud-endpoint="+endpoint)
 	}
-	if os.Getenv("AGR_TEST_DAEMON_DEBUG") == "1" {
+	switch os.Getenv("AGR_TEST_DAEMON_DEBUG") {
+	case "1":
 		os.Args = append(os.Args, "--debug")
+	case "env-off":
+		os.Args = append(os.Args, "--debug=false")
 	}
 	cli.Execute()
 }
@@ -130,8 +133,8 @@ func TestDaemonChild(t *testing.T) {
 		t.Fatal("missing child arguments")
 	}
 	args := append([]string{os.Args[0]}, os.Args[separator+1:]...)
-	if (os.Getenv("AGR_TEST_DAEMON_DEBUG") == "1") != slices.Contains(args, "--debug") {
-		t.Fatal("debug flag not forwarded")
+	if want := fmt.Sprintf("--debug=%t", os.Getenv("AGR_TEST_DAEMON_DEBUG") == "1"); !slices.Contains(args, want) {
+		t.Fatalf("debug flag not forwarded: want %s in %q", want, args)
 	}
 	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusForbidden)
@@ -209,17 +212,18 @@ func TestDaemonFailureProcess(t *testing.T) {
 		{"timeout", "TUNNEL_READY_TIMEOUT", "readiness_wait", 1},
 		{"cancel", "CANCELED", "readiness_wait", 1},
 	} {
-		for _, debug := range []bool{false, true} {
-			t.Run(fmt.Sprintf("%s/debug=%t", tc.mode, debug), func(t *testing.T) {
+		// env-off: AGR_DEBUG=1 is inherited, but the parent passes --debug=false.
+		for _, debugValue := range []string{"0", "1", "env-off"} {
+			debug := debugValue == "1"
+			t.Run(fmt.Sprintf("%s/debug=%s", tc.mode, debugValue), func(t *testing.T) {
 				home := t.TempDir()
 				ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
 				defer cancel()
 				cmd := exec.CommandContext(ctx, os.Args[0], "-test.run=^TestDaemonParent$")
-				debugValue := "0"
-				if debug {
-					debugValue = "1"
+				cmd.Env = append(os.Environ(), "HOME="+home, "USERPROFILE="+home, "AGR_TEST_DAEMON_PARENT=1", "AGR_TEST_DAEMON_MODE="+tc.mode, "AGR_TEST_DAEMON_DEBUG="+debugValue, "AGR_TEST_DAEMON_OUTPUT=json", "AGR_DEBUG=")
+				if debugValue == "env-off" {
+					cmd.Env = append(cmd.Env, "AGR_DEBUG=1")
 				}
-				cmd.Env = append(os.Environ(), "HOME="+home, "USERPROFILE="+home, "AGR_TEST_DAEMON_PARENT=1", "AGR_TEST_DAEMON_MODE="+tc.mode, "AGR_TEST_DAEMON_DEBUG="+debugValue, "AGR_TEST_DAEMON_OUTPUT=json")
 				var stdout, stderr bytes.Buffer
 				cmd.Stdout, cmd.Stderr = &stdout, &stderr
 				var exit *exec.ExitError
@@ -272,7 +276,7 @@ func TestDaemonFailureProcess(t *testing.T) {
 				if strings.Contains(stderr.String(), "tunnel log tail:") != (debug && hasLog) {
 					t.Fatalf("tail=%s", stderr.String())
 				}
-				if tc.mode == "handshake" && (!strings.Contains(string(logData), "child-context [REDACTED] [REDACTED] [REDACTED] https://user:REDACTED@example.test/?Signature=REDACTED\n") || strings.Contains(string(logData), "Debug: error=") != debug) {
+				if tc.mode == "handshake" && (!strings.Contains(string(logData), "child-context [REDACTED] [REDACTED] [REDACTED] https://user:REDACTED@example.test/?Signature=REDACTED\n") || strings.Contains(string(logData), "Debug: error=") != debug || strings.Contains(string(logData), "Debug log:") != debug) {
 					t.Fatalf("child log=%s", logData)
 				}
 				if tc.mode == "handshake" && !strings.Contains(string(logData), `dial headers: Authorization: Bearer [REDACTED] map[Authorization:[Bearer [REDACTED]]] {"Authorization":["Bearer [REDACTED]"],"X-Tc-Token":["[REDACTED]"]}`+"\n") {
