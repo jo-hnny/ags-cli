@@ -440,6 +440,9 @@ func writeFailureText(w io.Writer, failure *output.Failure) {
 	if requestID := failureRequestID(failure); requestID != "" {
 		fmt.Fprintf(w, "RequestId: %s\n", requestID)
 	}
+	if logPath, ok := failure.Details["LogPath"].(string); ok && logPath != "" {
+		fmt.Fprintf(w, "LogPath: %s\n", logPath)
+	}
 	if failure.Hint != "" {
 		fmt.Fprintf(w, "Hint: %s\n", failure.Hint)
 	}

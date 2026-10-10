@@ -465,8 +465,9 @@ NDJSON 流仍只输出一次终止事件；未知错误在普通模式下仍显�
 即使输出分段切开了凭据也能识别。远端程序自己的秘密 CLI 无从得知，不会脱敏，
 与 `kubectl logs` 一致。远端程序原始 stderr 仍及时、原样显示在终端。
 
-默认日志按进程新建，没有自动轮转或清理。后台 mobile tunnel 子进程继承环境中的
-`AGR_DEBUG=1` 时，也会创建自己的日志文件。若输出以可能是已知凭据开头的片段结束，
+默认日志按进程新建，没有自动轮转或清理。后台 mobile tunnel 子进程跟随父进程最终生效的
+debug 设置（显式 `--debug=false` 优先于继承的 `AGR_DEBUG=1`），开启时创建自己的默认日志文件，
+不共用 `--debug-log` 指定的路径。若输出以可能是已知凭据开头的片段结束，
 该片段写为 `[REDACTED]`。不再需要的旧日志需自行删除。
 
 普通 text 错误和 JSON/NDJSON 的 Failure 字段（含嵌套 Details）也会脱敏；
@@ -475,14 +476,23 @@ URL 只替换密码和敏感 query 值；其他参数转义损坏时也不整段
 Details 中以凭据或请求头命名的字段（如 `Authorization`、`Cookie`、`SecretKey`）会被替换；
 通用的 token/signature/sig 字段不仅凭名字隐藏。
 
-前台 mobile tunnel 获取 token 失败时保留云 API 分类和 RequestId；超时、取消保留各自分类。
+mobile tunnel 获取 token 失败时保留云 API 分类和 RequestId；超时、取消保留各自分类。
 握手 HTTP 401/403 返回 `TUNNEL_AUTH_FAILED`（退出码 4）。本地端口占用返回
 `PORT_IN_USE`（退出码 2），可换端口或使用 `--port 0`；其他未分类 tunnel 操作
 返回 `TUNNEL_ERROR` 并保留已观察到的原因。
 其他 WebSocket 握手失败使用 `NETWORK_ERROR`（退出码 1），并按实际观察附带
 `Failure.Details.Stage=websocket_handshake` 和 `HTTPStatus`，没有 HTTP 响应则省略状态码。
 字段说明见 `agr schema -o json` 的 `Data.FailureDetails` 和 `agr explain NETWORK_ERROR`。
-后台 `mobile connect` 的诊断转发属于后续步骤，目前尚未跨进程保留这些信息。
+后台 `mobile connect` 保留子进程的结构化 Failure 和退出码，包括握手状态码和云 API RequestId。
+没有有效子进程 Failure 时，按实际观察到的阶段返回 `TUNNEL_START_FAILED`、
+`TUNNEL_EXITED`、`TUNNEL_PROTOCOL_ERROR` 或 `TUNNEL_READY_TIMEOUT`。
+取消和 context deadline 保留各自分类；启动失败后会终止并回收子进程，清理等待有时间上限。
+
+仅在成功创建日志文件时，失败结果才包含 `Failure.Details.LogPath`，文本输出也会显示该路径。
+`--debug` 会转发给子进程，并在父进程 stderr 中单独显示 `tunnel log tail:`：
+从文件末尾 64 KiB 中取最多 40 行，再限制为末尾 8 KiB 加截断标记。
+tunnel 日志记录在落盘前就会脱敏和限长，尾部日志显示前会再次脱敏。
+日志文件创建失败不改变原始错误分类，也不会返回不存在的日志路径。
 
 远端程序正常返回非零退出码时，保留已有输出和退出码语义。诊断增强不代表业务操作可安全重试。
 

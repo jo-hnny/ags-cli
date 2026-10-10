@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"log"
 	"maps"
 	"net/http"
@@ -40,13 +39,6 @@ type RuntimeDeps struct {
 	NewTunnel      func(adbtunnel.TunnelOptions) (Tunnel, error)
 	Wait           func(context.Context)
 	StopTimeout    time.Duration
-}
-
-type readyMessage struct {
-	Status  string `json:"status"`
-	Port    int    `json:"port,omitempty"`
-	PID     int    `json:"pid,omitempty"`
-	Message string `json:"message,omitempty"`
 }
 
 // Module returns this package's command module.
@@ -108,12 +100,20 @@ func runtimeDeps(injected any) RuntimeDeps {
 	return rt
 }
 
-func runTunnel(ctx context.Context, req command.Request, deps command.Deps, rt RuntimeDeps) (*command.Result, error) {
+func runTunnel(ctx context.Context, req command.Request, deps command.Deps, rt RuntimeDeps) (result *command.Result, retErr error) {
 	instanceID := req.ArgValues["instance-id"]
 	if instanceID == "" && len(req.Args) > 0 {
 		instanceID = req.Args[0]
 	}
 	daemon := boolFlag(req, "daemon")
+	readyWritten := false
+	defer func() {
+		if daemon && !readyWritten && retErr != nil {
+			classified := cli.ClassifyCLIError(retErr)
+			_ = json.NewEncoder(deps.IO.Out).Encode(adbtunnel.ReadyMessage{Status: "error", Failure: classified.Failure, ExitCode: classified.ExitCode})
+		}
+	}()
+	logger := log.New(cli.DiagnosticWriter(deps.IO.ErrOut), "", log.LstdFlags)
 	port := intFlag(req, "port")
 	if port < 0 || port > 65535 {
 		return nil, output.NewUsageError("INVALID_PORT", "--port must be between 0 and 65535", "Use 0 for an automatically assigned port, or a port from 1 to 65535.")
@@ -131,20 +131,24 @@ func runTunnel(ctx context.Context, req command.Request, deps command.Deps, rt R
 		InstanceID: instanceID,
 		Domain:     cfg.DataPlaneRegionDomain(),
 		TokenProvider: func() (string, error) {
-			return rt.AcquireToken(ctx, instanceID)
+			token, err := rt.AcquireToken(ctx, instanceID)
+			if err == nil {
+				// Register every token the tunnel sends, whichever provider issued it.
+				cli.MaskSecret(token)
+			}
+			return token, err
 		},
 		ListenAddress: listenAddr,
 		Insecure:      false,
-		OnStateChange: makeStateChangeHandler(instanceID),
+		OnStateChange: makeStateChangeHandler(instanceID, logger),
+		Logger:        logger,
 	})
 	if err != nil {
-		writeReadyError(deps.IO.Out, daemon, fmt.Sprintf("failed to create tunnel: %v", err))
 		return nil, classifyTunnelError(fmt.Errorf("failed to create tunnel: %w", err))
 	}
 
 	addr, err := tunnel.Start()
 	if err != nil {
-		writeReadyError(deps.IO.Out, daemon, fmt.Sprintf("failed to start tunnel: %v", err))
 		if isAddressInUse(err) {
 			return nil, output.NewUsageError("PORT_IN_USE", fmt.Sprintf("local port %d is already in use", port), "Choose another --port or use --port 0.").WithCause(err)
 		}
@@ -153,17 +157,17 @@ func runTunnel(ctx context.Context, req command.Request, deps command.Deps, rt R
 
 	if err := tunnel.Probe(); err != nil {
 		tunnel.Stop()
-		writeReadyError(deps.IO.Out, daemon, err.Error())
 		return nil, classifyProbeError(fmt.Errorf("upstream probe failed: %w", err))
 	}
 
 	_, portStr, _ := strings.Cut(addr, ":")
 	if daemon {
-		msg := readyMessage{Status: "ready", Port: mustAtoi(portStr), PID: os.Getpid()}
+		msg := adbtunnel.ReadyMessage{Status: "ready", Port: mustAtoi(portStr), PID: os.Getpid()}
 		if err := json.NewEncoder(deps.IO.Out).Encode(msg); err != nil {
 			tunnel.Stop()
 			return nil, classifyTunnelError(fmt.Errorf("failed to write ready message: %w", err))
 		}
+		readyWritten = true
 	} else {
 		fmt.Fprintf(deps.IO.Out, "[Ready] ADB Tunnel established at %s\n", addr)
 		fmt.Fprintln(deps.IO.Out, "[Ready] Press Ctrl+C to disconnect.")
@@ -190,13 +194,6 @@ func runTunnel(ctx context.Context, req command.Request, deps command.Deps, rt R
 	}
 
 	return &command.Result{StreamDone: true}, nil
-}
-
-func writeReadyError(w io.Writer, daemon bool, message string) {
-	if !daemon {
-		return
-	}
-	_ = json.NewEncoder(w).Encode(readyMessage{Status: "error", Message: message})
 }
 
 func waitForSignal(ctx context.Context) {
@@ -263,11 +260,11 @@ func classifyProbeError(err error) error {
 // makeStateChangeHandler returns an OnStateChange callback that updates the
 // tunnel's status in the persistent tunnel store. This allows `mobile list`
 // to display the real health state without probing each tunnel.
-func makeStateChangeHandler(instanceID string) func(adbtunnel.TunnelState) {
+func makeStateChangeHandler(instanceID string, logger *log.Logger) func(adbtunnel.TunnelState) {
 	return func(state adbtunnel.TunnelState) {
 		store, err := tunnelstore.NewStore()
 		if err != nil {
-			log.Printf("[WARN] Failed to open tunnel store for status update: %v", err)
+			logger.Printf("[WARN] Failed to open tunnel store for status update: %v", err)
 			return
 		}
 		var status string
@@ -281,7 +278,7 @@ func makeStateChangeHandler(instanceID string) func(adbtunnel.TunnelState) {
 			status = "connected"
 		}
 		if err := store.UpdateStatus(instanceID, status, degradedAt); err != nil {
-			log.Printf("[WARN] Failed to update tunnel status in store: %v", err)
+			logger.Printf("[WARN] Failed to update tunnel status in store: %v", err)
 		}
 	}
 }
