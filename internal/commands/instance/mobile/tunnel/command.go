@@ -131,7 +131,12 @@ func runTunnel(ctx context.Context, req command.Request, deps command.Deps, rt R
 		InstanceID: instanceID,
 		Domain:     cfg.DataPlaneRegionDomain(),
 		TokenProvider: func() (string, error) {
-			return rt.AcquireToken(ctx, instanceID)
+			token, err := rt.AcquireToken(ctx, instanceID)
+			if err == nil {
+				// Register every token the tunnel sends, whichever provider issued it.
+				cli.MaskSecret(token)
+			}
+			return token, err
 		},
 		ListenAddress: listenAddr,
 		Insecure:      false,

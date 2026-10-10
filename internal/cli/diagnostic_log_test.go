@@ -21,17 +21,20 @@ type testLogSource struct {
 func (e testLogSource) DiagnosticLogPath() string { return e.path }
 
 func TestDiagnosticWriterRedactsBeforeWrite(t *testing.T) {
-	oldKey := secretKey
-	secretKey = "test-secret-key"
-	t.Cleanup(func() { secretKey = oldKey })
+	useTestSecrets(t)
+	MaskSecret("short-tok")
 	var disk bytes.Buffer
 	logger := log.New(DiagnosticWriter(&disk), "", 0)
-	logger.Print("test-secret-key https://user:proxy-secret@host/?Signature=signature-secret\nAuthorization: Bearer auth-secret\nCookie: session=cookie-secret")
-	for _, secret := range []string{"test-secret-key", "proxy-secret", "signature-secret", "auth-secret", "cookie-secret"} {
-		if strings.Contains(disk.String(), secret) {
-			t.Fatalf("persisted secret %q", secret)
-		}
+	logger.Print("handshake rejected id=test-access-id key=active-private/key https://user:proxy-secret@host/?Signature=signature-secret\n" +
+		"Authorization: Bearer short-tok\n" +
+		`{"Authorization":["Bearer short-tok"],"X-Tc-Token":["test-session-token"]} map[Authorization:[Bearer runtime-access-token-value]]`)
+	want := "handshake rejected id=[REDACTED] key=[REDACTED] https://user:REDACTED@host/?Signature=REDACTED\n" +
+		"Authorization: Bearer [REDACTED]\n" +
+		`{"Authorization":["Bearer [REDACTED]"],"X-Tc-Token":["[REDACTED]"]} map[Authorization:[Bearer [REDACTED]]]` + "\n"
+	if disk.String() != want {
+		t.Fatalf("log record:\n%s\nwant:\n%s", disk.String(), want)
 	}
+	disk.Reset()
 	logger.Print(strings.Repeat("错", 5000))
 	if !utf8.Valid(disk.Bytes()) || !strings.HasSuffix(disk.String(), "[truncated]\n") {
 		t.Fatal("invalid bounded log record")

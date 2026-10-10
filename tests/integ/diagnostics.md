@@ -101,7 +101,9 @@ new CLI wrappers on their existing paths.
   against a loopback WebSocket handshake rejection. They verify HTTP 403, custom
   child classification/exit code, text/JSON framing, debug forwarding, credential
   environment forwarding and redaction in the entire persisted log as well as
-  the displayed tail.
+  the displayed tail. Redaction covers every credential the child holds: the
+  forwarded session credentials and the data-plane token from the tunnel's
+  token provider, logged in header, JSON and `%v` forms.
 - Process fixtures exercise start failure, early exit, no readiness message,
   malformed/invalid messages, readiness timeout, cancellation, context deadline,
   unavailable log files and success. Failure paths assert the child was reaped.

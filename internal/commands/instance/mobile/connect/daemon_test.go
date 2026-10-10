@@ -163,7 +163,18 @@ func TestDaemonChild(t *testing.T) {
 				if logger == nil {
 					logger = log.Default()
 				}
-				logger.Printf("child-context test-secret-id test-secret-key test-session-token https://user:proxy-password@example.test/?Signature=signed-value\nAuthorization: Bearer header-secret\nCookie: session=cookie-secret")
+				logger.Printf("child-context test-secret-id test-secret-key test-session-token https://user:proxy-password@example.test/?Signature=signed-value")
+				// Log every credential the child holds, in common header renderings,
+				// after the real tunnel obtained its token through the command wrapper.
+				acquire := opts.TokenProvider
+				opts.TokenProvider = func() (string, error) {
+					token, err := acquire()
+					if err == nil {
+						headers, _ := json.Marshal(http.Header{"Authorization": {"Bearer " + token}, "X-Tc-Token": {config.GetToken()}})
+						logger.Printf("dial headers: Authorization: Bearer %s %v %s", token, http.Header{"Authorization": {"Bearer " + token}}, headers)
+					}
+					return token, err
+				}
 				opts.Endpoint = strings.TrimPrefix(server.URL, "https://")
 				opts.Insecure = true // test-only loopback TLS endpoint
 				return adbtunnel.New(opts)
@@ -244,7 +255,7 @@ func TestDaemonFailureProcess(t *testing.T) {
 					}
 				}
 				all := stdout.String() + stderr.String() + string(logData)
-				for _, secret := range []string{"test-secret-id", "test-secret-key", "test-session-token", "proxy-password", "signed-value", "header-secret", "cookie-secret", "private-response-body", "child-private-token"} {
+				for _, secret := range []string{"test-secret-id", "test-secret-key", "test-session-token", "proxy-password", "signed-value", "sandbox-token", "private-response-body", "child-private-token"} {
 					if strings.Contains(all, secret) {
 						t.Fatalf("secret %q leaked", secret)
 					}
@@ -261,7 +272,10 @@ func TestDaemonFailureProcess(t *testing.T) {
 				if strings.Contains(stderr.String(), "tunnel log tail:") != (debug && hasLog) {
 					t.Fatalf("tail=%s", stderr.String())
 				}
-				if tc.mode == "handshake" && (!strings.Contains(string(logData), "child-context") || strings.Contains(string(logData), "Debug: error=") != debug) {
+				if tc.mode == "handshake" && (!strings.Contains(string(logData), "child-context [REDACTED] [REDACTED] [REDACTED] https://user:REDACTED@example.test/?Signature=REDACTED\n") || strings.Contains(string(logData), "Debug: error=") != debug) {
+					t.Fatalf("child log=%s", logData)
+				}
+				if tc.mode == "handshake" && !strings.Contains(string(logData), `dial headers: Authorization: Bearer [REDACTED] map[Authorization:[Bearer [REDACTED]]] {"Authorization":["Bearer [REDACTED]"],"X-Tc-Token":["[REDACTED]"]}`+"\n") {
 					t.Fatalf("child log=%s", logData)
 				}
 			})
