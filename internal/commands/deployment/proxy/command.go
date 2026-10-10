@@ -151,6 +151,9 @@ func runProxy(ctx context.Context, req command.Request, deps command.Deps, cp Co
 		if err := apivalue.Project(value, &token); err != nil {
 			return nil, err
 		}
+		if token.Token != nil {
+			cli.MaskSecret(*token.Token)
+		}
 		return &token, nil
 	}, runtime.Now)
 	cfg := config.Get()

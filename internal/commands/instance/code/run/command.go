@@ -228,7 +228,7 @@ func runCodeStreamNDJSON(ctx context.Context, deps cmdcore.Deps, opts codeOption
 		cliErr := cli.ClassifyCLIError(err)
 		resolved.CleanupForPreExecutionFailure()
 		_ = nw.WriteFailed(map[string]any{"ExecutionContext": resolved.ExecContext}, cliErr.Failure)
-		return &cmdcore.Result{StreamDone: true, ExitCode: cliErr.ExitCode}, nil
+		return &cmdcore.Result{StreamDone: true, ExitCode: cliErr.ExitCode, Cause: err}, nil
 	}
 	runConfig := &toolcode.RunCodeConfig{Language: opts.Language}
 	callbacks := &toolcode.OnOutputConfig{
@@ -240,7 +240,7 @@ func runCodeStreamNDJSON(ctx context.Context, deps cmdcore.Deps, opts codeOption
 		cliErr := cli.ClassifyCLIError(err)
 		resolved.CleanupForPreExecutionFailure()
 		_ = nw.WriteFailed(map[string]any{"ExecutionContext": resolved.ExecContext}, cliErr.Failure)
-		return &cmdcore.Result{StreamDone: true, ExitCode: cliErr.ExitCode}, nil
+		return &cmdcore.Result{StreamDone: true, ExitCode: cliErr.ExitCode, Cause: err}, nil
 	}
 	if result.Error != nil {
 		resolved.Cleanup(false)

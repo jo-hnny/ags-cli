@@ -107,7 +107,7 @@ func runLogin(ctx context.Context, req command.Request, cp ControlPlane, rt Runt
 		return nil, err
 	}
 	if !rt.Interactive() {
-		return nil, exitError(2, fmt.Errorf("instance login requires interactive mode"))
+		return nil, output.NewUsageError("TTY_REQUIRED", "instance login requires interactive mode", "Run the command from an interactive terminal.")
 	}
 
 	instanceID := req.ArgValues["instance-id"]
@@ -149,6 +149,10 @@ func classifySessionError(err error) error {
 	if err == nil {
 		return nil
 	}
+	var classified *output.CLIError
+	if errors.As(err, &classified) {
+		return classified.WithCause(err)
+	}
 	msg := err.Error()
 
 	var connectErr *connect.Error
@@ -159,7 +163,7 @@ func classifySessionError(err error) error {
 			Kind:    output.KindGenericError,
 			Message: "data-plane PTY session failed: " + connectErr.Error(),
 			Hint:    "This error came from the envd data-plane session. Rerun with --debug and share stderr diagnostics if it persists.",
-		})
+		}).WithCause(err)
 	}
 
 	return output.NewCLIError(&output.Failure{
@@ -167,7 +171,7 @@ func classifySessionError(err error) error {
 		Kind:    output.KindGenericError,
 		Message: "data-plane PTY session failed: " + msg,
 		Hint:    "Rerun with --debug and share stderr diagnostics if the problem persists.",
-	})
+	}).WithCause(err)
 }
 
 func validateRunning(instanceID string, value any) error {
@@ -188,30 +192,6 @@ func validateRunning(instanceID string, value any) error {
 		return fmt.Errorf("instance %s is in error state. Please contact support or create a new instance", instanceID)
 	default:
 		return fmt.Errorf("instance %s is not running (status: %s). Please wait for it to be ready", instanceID, instance.String("Status"))
-	}
-}
-
-func exitError(code int, err error) error {
-	msg := "command failed"
-	if err != nil {
-		msg = err.Error()
-	}
-	return &output.CLIError{
-		Failure:  &output.Failure{Code: "CLI_ERROR", Kind: kindFromExitCode(code), Message: msg, Hint: "Run 'agr doctor' to diagnose configuration and environment issues."},
-		ExitCode: code,
-	}
-}
-
-func kindFromExitCode(code int) string {
-	switch code {
-	case output.ExitUsage:
-		return output.KindUsage
-	case output.ExitAuthOrPermission:
-		return output.KindAuthOrPermission
-	case output.ExitRemoteExecFailed:
-		return output.KindRemoteExecFailed
-	default:
-		return output.KindGenericError
 	}
 }
 

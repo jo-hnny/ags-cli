@@ -198,6 +198,10 @@ func (t *Tunnel) Stop() {
 // endpoint is reachable and the token is valid. It connects, then immediately
 // sends a Close frame and disconnects. Returns nil if the probe succeeds.
 func (t *Tunnel) Probe() error {
+	return t.probe(probeTimeout)
+}
+
+func (t *Tunnel) probe(timeout time.Duration) error {
 	dialer := t.newDialer()
 
 	headers := http.Header{}
@@ -210,12 +214,23 @@ func (t *Tunnel) Probe() error {
 		headers.Set("Host", t.e2bHost)
 	}
 
-	probeCtx, probeCancel := context.WithTimeout(t.ctx, probeTimeout)
+	probeCtx, probeCancel := context.WithTimeout(t.ctx, timeout)
 	defer probeCancel()
 
-	wsConn, _, err := dialer.DialContext(probeCtx, t.wsURL, headers)
+	wsConn, response, err := dialer.DialContext(probeCtx, t.wsURL, headers)
 	if err != nil {
-		return fmt.Errorf("upstream WS handshake failed: %w", err)
+		var netErr net.Error
+		if probeCtx.Err() != nil && !errors.Is(err, probeCtx.Err()) {
+			err = errors.Join(err, probeCtx.Err())
+		} else if errors.As(err, &netErr) && netErr.Timeout() && !errors.Is(err, context.DeadlineExceeded) {
+			// The socket deadline mirrors probeCtx's and can fire before its timer.
+			err = errors.Join(err, context.DeadlineExceeded)
+		}
+		failure := &HandshakeError{Cause: err}
+		if response != nil {
+			failure.HTTPStatus = response.StatusCode
+		}
+		return failure
 	}
 
 	// Send a clean close and disconnect immediately
@@ -228,6 +243,22 @@ func (t *Tunnel) Probe() error {
 
 	return nil
 }
+
+// HandshakeError records only observations available at the WebSocket boundary.
+// It never retains response bodies or authentication headers.
+type HandshakeError struct {
+	Cause      error
+	HTTPStatus int
+}
+
+func (e *HandshakeError) Error() string {
+	if e.HTTPStatus != 0 {
+		return fmt.Sprintf("upstream WS handshake failed (HTTP %d): %v", e.HTTPStatus, strings.ReplaceAll(fmt.Sprint(e.Cause), "\n", "; "))
+	}
+	return fmt.Sprintf("upstream WS handshake failed: %s", strings.ReplaceAll(fmt.Sprint(e.Cause), "\n", "; "))
+}
+
+func (e *HandshakeError) Unwrap() error { return e.Cause }
 
 func (t *Tunnel) newDialer() *websocket.Dialer {
 	dialer := &websocket.Dialer{

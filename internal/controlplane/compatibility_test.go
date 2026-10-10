@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"reflect"
 	"strings"
 	"testing"
@@ -12,7 +13,27 @@ import (
 	"github.com/TencentCloudAgentRuntime/ags-cli/internal/apivalue"
 	"github.com/TencentCloudAgentRuntime/ags-cli/internal/config"
 	"github.com/TencentCloudAgentRuntime/ags-cli/internal/dataplane/token"
+	"github.com/TencentCloudAgentRuntime/ags-cli/internal/output"
+	sdkerrors "github.com/tencentcloud/tencentcloud-sdk-go/tencentcloud/common/errors"
 )
+
+func TestDynamicCallPreservesClassifiedCauseAndContext(t *testing.T) {
+	config.SetSecretID("fake")
+	config.SetSecretKey("fake")
+	cause := sdkerrors.NewTencentCloudSDKError("AuthFailure.Test", "denied", "req-test")
+	original := output.NewConflictError("CUSTOM", "classified", "hint").WithCause(cause)
+	sdk := &SDK{RawSender: func(context.Context, string, string, []byte) ([]byte, error) {
+		return nil, fmt.Errorf("transport operation: %w", original)
+	}}
+	_, err := sdk.callDynamic(t.Context(), "DescribeSandboxInstanceList", map[string]any{})
+	var classified *output.CLIError
+	if !errors.As(err, &classified) || classified.Failure.Code != "CUSTOM" || !errors.Is(err, cause) {
+		t.Fatalf("classification lost: %v", err)
+	}
+	if !strings.Contains(errors.Unwrap(classified).Error(), "transport operation") {
+		t.Fatalf("context lost: %v", err)
+	}
+}
 
 func TestSDKNumericCompatibility(t *testing.T) {
 	for _, kind := range []string{"int", "int64", "integer", "uint", "uint64", "float", "double"} {

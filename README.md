@@ -467,7 +467,8 @@ See `agr schema -o json --jq '.Data.ExitCodes'` for the full list.
 --token           Tencent Cloud STS session token
 --non-interactive Disable interactive behavior
 --no-color        Disable ANSI color
---debug           Write debug diagnostics to stderr
+--debug           Write debug diagnostics to stderr and full redacted logs locally
+--debug-log       Append debug logs to a specified file (enables --debug)
 ```
 
 Environment variables: `TENCENTCLOUD_SECRET_ID`, `TENCENTCLOUD_SECRET_KEY`, `TENCENTCLOUD_TOKEN`, `AGR_OUTPUT`, `AGR_REGION`, `AGR_CLOUD_ENDPOINT`, `AGR_DOMAIN`, `AGR_NON_INTERACTIVE`, `AGR_DEBUG`, `NO_COLOR`.
@@ -477,6 +478,59 @@ Environment variables: `TENCENTCLOUD_SECRET_ID`, `TENCENTCLOUD_SECRET_KEY`, `TEN
 Configuration priority: `--flag` > environment variable > `~/.agr/config.toml` > default. Use `agr status` to inspect resolved values and their sources.
 
 ## Troubleshooting
+
+Use `--debug` to write a bounded, redacted error chain to stderr. JSON stdout
+remains one envelope; NDJSON streams retain their single terminal event. Unknown
+errors still show `INTERNAL_ERROR` in normal output. No stack dump or upload is
+performed.
+
+Redaction replaces credential values only and never removes surrounding text,
+so the failure reason stays intact. It replaces, by exact value (raw and
+URL-encoded), the active SecretId/SecretKey/Token and the data-plane/deployment
+access tokens the CLI obtains; the credential after `Bearer`/`Basic` (16 or more
+characters); and URL passwords and signed URL query values. Other header values
+are not guessed from text.
+
+`--debug` (or `AGR_DEBUG=1`) also saves full redacted diagnostics and a copy of stderr to
+`~/.agr/logs/agr-<UTC timestamp>-<unique suffix>.log`. Use
+`--debug-log ./logs/agr.log` to enable debug and append to a specified file.
+Successful and failed commands print `Debug log: <absolute path>` to stderr;
+logging failures produce a warning without replacing the command's result or
+exit code.
+
+The copied stderr, including remote program output, is written in full with no
+line limit; only the known credential values above are replaced, wherever
+output chunks split them. Remote programs' own secrets are not known to the CLI
+and are not redacted, as with `kubectl logs`. The original program stderr still
+reaches the terminal immediately and unchanged.
+
+Default log files are created per process and are not automatically rotated or
+deleted. `AGR_DEBUG=1` also reaches background mobile tunnel processes through
+their inherited environment, so those processes create their own log files.
+If output ends with a fragment that may start a known credential, that fragment
+is written as `[REDACTED]`. Remove old files when they are no longer needed.
+
+Redaction also applies to ordinary text errors and JSON/NDJSON `Failure` fields,
+including nested `Details`, without truncating ordinary error strings. Only
+terminal debug diagnostics are capped at 8 KiB plus a UTF-8-safe truncation marker.
+URL redaction changes only passwords and sensitive query values, even when
+unrelated URL escapes are malformed. `Details` fields named after credentials or
+headers (such as `Authorization`, `Cookie`, `SecretKey`) are replaced; generic
+`Details.token`/`signature`/`sig` fields are not hidden by name alone.
+
+For foreground mobile tunnel failures, token acquisition retains cloud API
+classification and RequestId; timeouts and cancellations retain their own kinds.
+Handshake HTTP 401/403 uses `TUNNEL_AUTH_FAILED` (exit 4). A local port already
+in use returns `PORT_IN_USE` (exit 2); choose another port or `--port 0`. Other
+unclassified tunnel operations use `TUNNEL_ERROR` and retain the observed reason.
+Other WebSocket handshake failures use `NETWORK_ERROR` (exit 1), with optional
+`Failure.Details.Stage=websocket_handshake` and `HTTPStatus` when observed. These
+fields are described by `agr schema -o json` under `Data.FailureDetails` and by
+`agr explain NETWORK_ERROR`. Background `mobile connect` diagnostic forwarding
+is a separate follow-up; it does not yet preserve these details across processes.
+
+Remote programs returning nonzero exit codes keep their existing output and
+exit-code semantics. Diagnostic availability does not make retries safe to replay.
 
 ```bash
 agr status

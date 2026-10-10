@@ -74,6 +74,7 @@ func acquireInstanceToken(ctx context.Context, instanceID string) (string, error
 	tokenCache, err := token.NewCache()
 	if err == nil {
 		if cachedToken, ok := tokenCache.Get(instanceID); ok && cachedToken != "" {
+			MaskSecret(cachedToken)
 			return cachedToken, nil
 		}
 	}
@@ -90,6 +91,7 @@ func acquireInstanceToken(ctx context.Context, instanceID string) (string, error
 		return "", err
 	}
 	accessToken := derefString(resp.Token)
+	MaskSecret(accessToken)
 
 	if tokenCache != nil {
 		_ = tokenCache.Set(instanceID, accessToken)
@@ -106,6 +108,7 @@ func GetCachedTokenOrAcquire(ctx context.Context, instanceID string) (string, er
 	}
 
 	if cachedToken, found := tokenCache.Get(instanceID); found {
+		MaskSecret(cachedToken)
 		return cachedToken, nil
 	}
 

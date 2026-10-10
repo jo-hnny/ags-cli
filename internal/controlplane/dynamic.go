@@ -3,7 +3,6 @@ package controlplane
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 
 	"github.com/TencentCloudAgentRuntime/ags-cli/internal/apimeta"
@@ -23,11 +22,7 @@ func (s *SDK) callDynamic(ctx context.Context, action string, request map[string
 		if ctx.Err() != nil {
 			return nil, ctx.Err()
 		}
-		var sdkErr *sdkerrors.TencentCloudSDKError
-		if errors.As(err, &sdkErr) {
-			return nil, client.ClassifyCloudError(sdkErr)
-		}
-		return nil, output.ClassifyError(err)
+		return nil, client.ClassifyError(err)
 	}
 	envelope, err := apivalue.Decode(result.Response)
 	if err != nil {

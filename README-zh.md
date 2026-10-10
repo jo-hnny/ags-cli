@@ -431,7 +431,8 @@ agr instance exec "$id" --stream -o ndjson -- tail -f app.log
 --secret-key      腾讯云 SecretKey
 --non-interactive 禁用交互提示
 --no-color        关闭 ANSI 颜色
---debug           将调试信息写到 stderr
+--debug           将调试信息写到 stderr，并在本地保存完整脱敏日志
+--debug-log       将调试日志追加到指定文件（自动开启 --debug）
 ```
 
 环境变量：`TENCENTCLOUD_SECRET_ID`、`TENCENTCLOUD_SECRET_KEY`、
@@ -445,6 +446,45 @@ agr instance exec "$id" --stream -o ndjson -- tail -f app.log
 配置优先级：`--flag` > 环境变量 > `~/.agr/config.toml` > 默认值。使用 `agr status` 查看当前生效值及其来源。
 
 ## 故障排查
+
+`--debug` 会将限长、脱敏后的错误链写到 stderr。JSON stdout 仍是单个 envelope，
+NDJSON 流仍只输出一次终止事件；未知错误在普通模式下仍显示 `INTERNAL_ERROR`。
+不生成堆栈转储或上传日志。
+
+脱敏只替换凭据值本身，不删除周围文字，失败原因保持完整。替换范围：按精确值（原文及 URL
+编码形式）替换当前生效的 SecretId/SecretKey/Token 以及 CLI 获取的 data-plane/deployment
+访问 token；`Bearer`/`Basic` 后 16 个字符以上的凭据；URL 密码和签名 query 值。
+不从文本中猜测其他请求头的值。
+
+`--debug`（或 `AGR_DEBUG=1`）还会将完整脱敏诊断和 stderr 保存到
+`~/.agr/logs/agr-<UTC 时间>-<随机后缀>.log`。可用 `--debug-log ./logs/agr.log`
+开启 debug 并追加到指定文件。命令成功或失败时都会在 stderr
+显示 `Debug log: <绝对路径>`。日志写入失败会给出警告，保留原命令结果和退出码。
+
+复制的 stderr（包括远端程序输出）完整写入，不限制单行长度；只替换上述已知凭据值，
+即使输出分段切开了凭据也能识别。远端程序自己的秘密 CLI 无从得知，不会脱敏，
+与 `kubectl logs` 一致。远端程序原始 stderr 仍及时、原样显示在终端。
+
+默认日志按进程新建，没有自动轮转或清理。后台 mobile tunnel 子进程继承环境中的
+`AGR_DEBUG=1` 时，也会创建自己的日志文件。若输出以可能是已知凭据开头的片段结束，
+该片段写为 `[REDACTED]`。不再需要的旧日志需自行删除。
+
+普通 text 错误和 JSON/NDJSON 的 Failure 字段（含嵌套 Details）也会脱敏；
+普通错误字符串不截断，仅终端 debug 诊断限制为 8 KiB 加 UTF-8 安全截断标记。
+URL 只替换密码和敏感 query 值；其他参数转义损坏时也不整段隐藏。
+Details 中以凭据或请求头命名的字段（如 `Authorization`、`Cookie`、`SecretKey`）会被替换；
+通用的 token/signature/sig 字段不仅凭名字隐藏。
+
+前台 mobile tunnel 获取 token 失败时保留云 API 分类和 RequestId；超时、取消保留各自分类。
+握手 HTTP 401/403 返回 `TUNNEL_AUTH_FAILED`（退出码 4）。本地端口占用返回
+`PORT_IN_USE`（退出码 2），可换端口或使用 `--port 0`；其他未分类 tunnel 操作
+返回 `TUNNEL_ERROR` 并保留已观察到的原因。
+其他 WebSocket 握手失败使用 `NETWORK_ERROR`（退出码 1），并按实际观察附带
+`Failure.Details.Stage=websocket_handshake` 和 `HTTPStatus`，没有 HTTP 响应则省略状态码。
+字段说明见 `agr schema -o json` 的 `Data.FailureDetails` 和 `agr explain NETWORK_ERROR`。
+后台 `mobile connect` 的诊断转发属于后续步骤，目前尚未跨进程保留这些信息。
+
+远端程序正常返回非零退出码时，保留已有输出和退出码语义。诊断增强不代表业务操作可安全重试。
 
 ```bash
 agr status

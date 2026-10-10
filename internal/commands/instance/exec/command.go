@@ -223,7 +223,7 @@ func runExecStreamNDJSON(ctx context.Context, deps cmdcore.Deps, opts execOption
 		cliErr := cli.ClassifyCLIError(err)
 		resolved.CleanupForPreExecutionFailure()
 		_ = nw.WriteFailed(map[string]any{"ExecutionContext": resolved.ExecContext}, cliErr.Failure)
-		return &cmdcore.Result{StreamDone: true, ExitCode: cliErr.ExitCode}, nil
+		return &cmdcore.Result{StreamDone: true, ExitCode: cliErr.ExitCode, Cause: err}, nil
 	}
 	procConfig := &sdkcommand.ProcessConfig{User: cli.ResolveUser(opts.User), Envs: envs}
 	if opts.Cwd != "" {
@@ -238,7 +238,7 @@ func runExecStreamNDJSON(ctx context.Context, deps cmdcore.Deps, opts execOption
 		cliErr := cli.ClassifyCLIError(err)
 		resolved.Cleanup(false)
 		_ = nw.WriteFailed(map[string]any{"ExecutionContext": resolved.ExecContext}, cliErr.Failure)
-		return &cmdcore.Result{StreamDone: true, ExitCode: cliErr.ExitCode}, nil
+		return &cmdcore.Result{StreamDone: true, ExitCode: cliErr.ExitCode, Cause: err}, nil
 	}
 	if result.ExitCode != 0 {
 		resolved.Cleanup(false)

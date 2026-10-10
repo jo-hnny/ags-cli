@@ -10,6 +10,7 @@ import (
 	requestio "github.com/TencentCloudAgentRuntime/ags-cli/internal/cli/request"
 	"github.com/TencentCloudAgentRuntime/ags-cli/internal/command"
 	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
 )
 
 // clientTokenProperty is the request member that makes a mutation safely
@@ -120,13 +121,30 @@ func schemaFn(cmd *cobra.Command, args []string) (*CmdResult, error) {
 		return nil, fmt.Errorf("unknown command: %s", args[0])
 	}
 
-	data := map[string]any{"Commands": catalog.Ordered, "ExitCodes": exitCodeTable()}
+	data := map[string]any{
+		"Commands": catalog.Ordered, "ExitCodes": exitCodeTable(),
+		"GlobalFlags": globalFlagSchemas(cmd.Root()),
+		"FailureDetails": map[string]any{
+			"Stage":      map[string]string{"Type": "string", "Description": "Optional observed failure stage; websocket_handshake for a foreground mobile tunnel handshake failure."},
+			"HTTPStatus": map[string]string{"Type": "integer", "Description": "Optional HTTP status observed during a failed foreground mobile tunnel WebSocket handshake. HTTP 401/403 uses TUNNEL_AUTH_FAILED; other unclassified handshake failures use NETWORK_ERROR. Omitted when no response was received."},
+		},
+	}
 	return OK(data, func(w io.Writer) {
 		fmt.Fprintf(w, "%-35s %s\n", "COMMAND", "SUMMARY")
 		for _, s := range catalog.Ordered {
 			fmt.Fprintf(w, "%-35s %s\n", s.Name, s.Summary)
 		}
 	}), nil
+}
+
+func globalFlagSchemas(root *cobra.Command) []FlagSchema {
+	var flags []FlagSchema
+	root.PersistentFlags().VisitAll(func(flag *pflag.Flag) {
+		if !flag.Hidden {
+			flags = append(flags, FlagSchema{Name: flag.Name, Shorthand: flag.Shorthand, Type: flag.Value.Type(), Description: flag.Usage, Default: flag.DefValue})
+		}
+	})
+	return flags
 }
 
 func renderSchemaText(w io.Writer, s CommandSchema) {
@@ -1109,6 +1127,7 @@ func buildHandwrittenSchemas() []CommandSchema {
 			RequiresAuth: true, SupportsJson: false, SupportsNdjson: false, SupportsJq: false,
 			SupportsRequest: false,
 			Args:            []ArgSchema{{Name: "InstanceId", Type: "string", Required: true}},
+			Failures:        []string{"TTY_REQUIRED"},
 		},
 		{
 			Name: "instance.browser.vnc", Summary: "Show VNC URL for browser sandbox",

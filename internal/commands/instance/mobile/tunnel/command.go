@@ -3,9 +3,12 @@ package tunnel
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
+	"maps"
+	"net/http"
 	"os"
 	"os/signal"
 	"strconv"
@@ -14,6 +17,7 @@ import (
 	"time"
 
 	"github.com/TencentCloudAgentRuntime/ags-cli/internal/cli"
+	"github.com/TencentCloudAgentRuntime/ags-cli/internal/client"
 	"github.com/TencentCloudAgentRuntime/ags-cli/internal/command"
 	"github.com/TencentCloudAgentRuntime/ags-cli/internal/config"
 	"github.com/TencentCloudAgentRuntime/ags-cli/internal/dataplane/adbtunnel"
@@ -112,10 +116,10 @@ func runTunnel(ctx context.Context, req command.Request, deps command.Deps, rt R
 	daemon := boolFlag(req, "daemon")
 	port := intFlag(req, "port")
 	if port < 0 || port > 65535 {
-		return nil, exitError(output.ExitUsage, fmt.Errorf("--port must be between 0 and 65535"))
+		return nil, output.NewUsageError("INVALID_PORT", "--port must be between 0 and 65535", "Use 0 for an automatically assigned port, or a port from 1 to 65535.")
 	}
 	if err := rt.ValidateConfig(); err != nil {
-		return nil, exitError(output.ExitGenericError, err)
+		return nil, err
 	}
 
 	cfg := config.Get()
@@ -135,19 +139,22 @@ func runTunnel(ctx context.Context, req command.Request, deps command.Deps, rt R
 	})
 	if err != nil {
 		writeReadyError(deps.IO.Out, daemon, fmt.Sprintf("failed to create tunnel: %v", err))
-		return nil, exitError(output.ExitGenericError, fmt.Errorf("failed to create tunnel: %w", err))
+		return nil, classifyTunnelError(fmt.Errorf("failed to create tunnel: %w", err))
 	}
 
 	addr, err := tunnel.Start()
 	if err != nil {
 		writeReadyError(deps.IO.Out, daemon, fmt.Sprintf("failed to start tunnel: %v", err))
-		return nil, exitError(output.ExitGenericError, fmt.Errorf("failed to start tunnel: %w", err))
+		if isAddressInUse(err) {
+			return nil, output.NewUsageError("PORT_IN_USE", fmt.Sprintf("local port %d is already in use", port), "Choose another --port or use --port 0.").WithCause(err)
+		}
+		return nil, classifyTunnelError(fmt.Errorf("failed to start tunnel: %w", err))
 	}
 
 	if err := tunnel.Probe(); err != nil {
 		tunnel.Stop()
 		writeReadyError(deps.IO.Out, daemon, err.Error())
-		return nil, exitError(output.ExitUsage, fmt.Errorf("upstream probe failed: %w", err))
+		return nil, classifyProbeError(fmt.Errorf("upstream probe failed: %w", err))
 	}
 
 	_, portStr, _ := strings.Cut(addr, ":")
@@ -155,7 +162,7 @@ func runTunnel(ctx context.Context, req command.Request, deps command.Deps, rt R
 		msg := readyMessage{Status: "ready", Port: mustAtoi(portStr), PID: os.Getpid()}
 		if err := json.NewEncoder(deps.IO.Out).Encode(msg); err != nil {
 			tunnel.Stop()
-			return nil, exitError(output.ExitGenericError, fmt.Errorf("failed to write ready message: %w", err))
+			return nil, classifyTunnelError(fmt.Errorf("failed to write ready message: %w", err))
 		}
 	} else {
 		fmt.Fprintf(deps.IO.Out, "[Ready] ADB Tunnel established at %s\n", addr)
@@ -216,28 +223,41 @@ func mustAtoi(s string) int {
 	return n
 }
 
-func exitError(code int, err error) error {
-	msg := "command failed"
-	if err != nil {
-		msg = err.Error()
+func classifyTunnelError(err error) error {
+	classified := client.ClassifyError(err)
+	if classified.Failure.Code == "INTERNAL_ERROR" {
+		return output.NewCLIError(&output.Failure{Code: "TUNNEL_ERROR", Kind: output.KindGenericError, Message: err.Error(), Hint: "Inspect the reported tunnel operation; use --debug for the underlying cause."}).WithCause(err)
 	}
-	return &output.CLIError{
-		Failure:  &output.Failure{Code: "CLI_ERROR", Kind: kindFromExitCode(code), Message: msg, Hint: "Run 'agr doctor' to diagnose configuration and environment issues."},
-		ExitCode: code,
-	}
+	return classified
 }
 
-func kindFromExitCode(code int) string {
-	switch code {
-	case output.ExitUsage:
-		return output.KindUsage
-	case output.ExitAuthOrPermission:
-		return output.KindAuthOrPermission
-	case output.ExitRemoteExecFailed:
-		return output.KindRemoteExecFailed
-	default:
-		return output.KindGenericError
+func classifyProbeError(err error) error {
+	classified := client.ClassifyError(err)
+	var handshake *adbtunnel.HandshakeError
+	if !errors.As(err, &handshake) {
+		return classifyTunnelError(err)
 	}
+	if classified.Failure.Code == "INTERNAL_ERROR" && (handshake.HTTPStatus == http.StatusUnauthorized || handshake.HTTPStatus == http.StatusForbidden) {
+		classified = output.NewCLIError(&output.Failure{Code: "TUNNEL_AUTH_FAILED", Kind: output.KindAuthOrPermission, Message: err.Error(), Hint: "Check the tunnel access token and permissions, then reconnect."}).WithCause(err)
+	}
+	if classified.Failure.Code == "INTERNAL_ERROR" {
+		classified = output.NewCLIError(&output.Failure{
+			Code: "NETWORK_ERROR", Kind: output.KindNetwork, Message: err.Error(),
+			Hint: "Check the tunnel endpoint, network, and access token. Inspect Failure.Details.HTTPStatus when present.",
+		}).WithCause(err)
+	}
+	failure := *classified.Failure
+	failure.Details = maps.Clone(classified.Failure.Details)
+	if failure.Details == nil {
+		failure.Details = map[string]any{}
+	}
+	failure.Details["Stage"] = "websocket_handshake"
+	if handshake.HTTPStatus != 0 {
+		failure.Details["HTTPStatus"] = handshake.HTTPStatus
+	}
+	copy := *classified
+	copy.Failure = &failure
+	return &copy
 }
 
 // makeStateChangeHandler returns an OnStateChange callback that updates the
