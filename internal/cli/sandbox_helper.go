@@ -14,6 +14,7 @@ import (
 
 	"github.com/TencentCloudAgentRuntime/ags-cli/internal/config"
 	"github.com/TencentCloudAgentRuntime/ags-cli/internal/dataplane/token"
+	"github.com/TencentCloudAgentRuntime/ags-cli/internal/output"
 	ags "github.com/tencentcloud/tencentcloud-sdk-go/tencentcloud/ags/v20250920"
 )
 
@@ -135,5 +136,6 @@ func connectSandboxDefault(ctx context.Context, instanceID string) (*code.Sandbo
 
 // ConnectSandboxWithCache connects to an existing sandbox using cached token.
 func ConnectSandboxWithCache(ctx context.Context, instanceID string) (*code.Sandbox, error) {
-	return connectSandbox(ctx, instanceID)
+	sandbox, err := connectSandbox(ctx, instanceID)
+	return sandbox, output.WithContext(err, map[string]any{"Stage": "remote_connect", "InstanceId": instanceID})
 }

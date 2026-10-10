@@ -63,7 +63,7 @@ func startTunnelProcess(ctx context.Context, cmd *exec.Cmd, logPath string, logF
 		if resultErr == nil {
 			return
 		}
-		classified := cli.ClassifyCLIError(resultErr)
+		classified := cli.ClassifyCLIError(output.WithContext(resultErr, map[string]any{"Program": cmd.Path}))
 		if logFile != nil {
 			failure := *classified.Failure
 			failure.Details = maps.Clone(failure.Details)

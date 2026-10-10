@@ -249,6 +249,15 @@ func classifyProbeError(err error) error {
 		failure.Details = map[string]any{}
 	}
 	failure.Details["Stage"] = "websocket_handshake"
+	if handshake.Endpoint != "" {
+		failure.Details["Endpoint"] = handshake.Endpoint
+	}
+	if handshake.TimeoutMs > 0 {
+		failure.Details["TimeoutMs"] = handshake.TimeoutMs
+	}
+	if handshake.RequestID != "" {
+		failure.Details["RequestId"] = handshake.RequestID
+	}
 	if handshake.HTTPStatus != 0 {
 		failure.Details["HTTPStatus"] = handshake.HTTPStatus
 	}

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"strings"
 	"testing"
 
 	"github.com/TencentCloudAgentRuntime/ags-cli/internal/output"
@@ -114,6 +115,21 @@ func TestClassifyErrorSDKRateLimit(t *testing.T) {
 	}
 	if result.Failure.Fix != "wait and retry" {
 		t.Fatalf("Fix = %q, want 'wait and retry'", result.Failure.Fix)
+	}
+}
+
+func TestClassifyErrorSDKNetworkError(t *testing.T) {
+	sdkErr := sdkerrors.NewTencentCloudSDKError("ClientError.NetworkError", `Fail to get response because Post "https://127.0.0.1:1/": dial tcp 127.0.0.1:1: connect: connection refused`, "")
+	result := ClassifyError(sdkErr)
+	if result.Failure.Code != "ClientError.NetworkError" || result.Failure.Kind != output.KindNetwork || result.ExitCode != output.ExitNetwork {
+		t.Fatalf("failure = %#v, exit = %d", result.Failure, result.ExitCode)
+	}
+	// The request may have reached the service, so a replay is not known to be safe.
+	if result.Failure.Retryable || !strings.Contains(result.Failure.Hint, "cloud_endpoint") || result.Failure.Fix != "agr doctor" {
+		t.Fatalf("failure = %#v", result.Failure)
+	}
+	if _, ok := result.Failure.Details["RequestId"]; ok {
+		t.Fatal("request ID fabricated")
 	}
 }
 

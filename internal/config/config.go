@@ -3,6 +3,7 @@
 package config
 
 import (
+	"errors"
 	"fmt"
 	"net/url"
 	"os"
@@ -11,6 +12,8 @@ import (
 	"strings"
 
 	"github.com/TencentCloudAgentRuntime/ags-cli/internal/output"
+	"github.com/go-viper/mapstructure/v2"
+	"github.com/pelletier/go-toml/v2"
 	"github.com/spf13/viper"
 )
 
@@ -107,7 +110,11 @@ func Init() error {
 
 	if err := viper.ReadInConfig(); err != nil {
 		if _, ok := err.(viper.ConfigFileNotFoundError); !ok {
-			return fmt.Errorf("failed to read config file: %w", err)
+			var pathErr *os.PathError
+			if errors.As(err, &pathErr) {
+				return output.WithContext(fmt.Errorf("failed to read config file: %w", err), map[string]any{"Stage": "config_read"})
+			}
+			return configParseError("config_parse", err)
 		}
 	}
 	configFileUsed = viper.ConfigFileUsed()
@@ -115,12 +122,58 @@ func Init() error {
 
 	nextCfg := &Config{}
 	if err := viper.Unmarshal(nextCfg); err != nil {
-		return fmt.Errorf("failed to unmarshal config: %w", err)
+		return configParseError("config_decode", err)
 	}
 	applyDefaults(nextCfg)
 	cfg = nextCfg
 	initSources()
 	return nil
+}
+
+// A failed load has not registered its secrets with the output redactor. Parser
+// and decoder messages can quote those values, so retain locations, field names
+// and value-free reasons, not input.
+func configParseError(stage string, err error) error {
+	details := map[string]any{"Stage": stage, "Path": ConfigFilePath()}
+	var positioned interface{ Position() (int, int) }
+	if errors.As(err, &positioned) {
+		row, column := positioned.Position()
+		details["Line"], details["Column"] = row, column
+	}
+	message := "failed to parse config file; check TOML syntax and field types"
+	if reason := configErrorReason(err); reason != "" {
+		message = "failed to parse config file: " + reason
+	}
+	return output.WithContext(errors.New(message), details)
+}
+
+// The parser renders an offending input character as U+XXXX 'c'.
+var tomlInputCharacter = regexp.MustCompile(`U\+[0-9A-F]{4,6}( '[^']*')?`)
+
+func configErrorReason(err error) string {
+	var tomlErr *toml.DecodeError
+	if errors.As(err, &tomlErr) {
+		// Causes wrapped after ": ", such as strconv errors, quote the input.
+		reason, _, _ := strings.Cut(strings.TrimPrefix(tomlErr.Error(), "toml: "), ": ")
+		return tomlInputCharacter.ReplaceAllString(reason, "[REDACTED]")
+	}
+	var fieldErr *mapstructure.DecodeError
+	if !errors.As(err, &fieldErr) {
+		return ""
+	}
+	for {
+		var nested *mapstructure.DecodeError
+		if !errors.As(fieldErr.Unwrap(), &nested) {
+			break
+		}
+		fieldErr = nested
+	}
+	// Only the type error is rendered from types alone; others may quote values.
+	var typeErr *mapstructure.UnconvertibleTypeError
+	if errors.As(fieldErr, &typeErr) {
+		return fmt.Sprintf("field %q %s", fieldErr.Name(), typeErr.Error())
+	}
+	return fmt.Sprintf("field %q has an invalid value", fieldErr.Name())
 }
 
 func initSources() {

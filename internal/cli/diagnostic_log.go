@@ -73,6 +73,7 @@ func debugTunnelLog(err error) {
 	if tail == "" {
 		tail = "(no complete log lines available)"
 	}
-	// Keep the source label separate from the parent's single error chain.
-	fmt.Fprintf(ios.ErrOut, "tunnel log tail:\n%s\n", tail)
+	// Quote and close the tail: it holds the child's own error output, which
+	// must not read as a second copy of the parent's error.
+	fmt.Fprintf(ios.ErrOut, "tunnel log tail:\n  | %s\nend of tunnel log tail\n", strings.ReplaceAll(tail, "\n", "\n  | "))
 }

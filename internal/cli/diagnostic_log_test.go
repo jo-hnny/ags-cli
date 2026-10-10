@@ -57,6 +57,16 @@ func TestDebugTunnelLogTail(t *testing.T) {
 	if strings.Count(got, "Debug: error=") != 1 || strings.Count(got, "tunnel log tail:") != 1 || !strings.Contains(got, "latest-cause") || !strings.Contains(got, "[truncated]") || len(got) > diagnosticLimit+200 || !utf8.ValidString(got) {
 		t.Fatalf("invalid tail length=%d", len(got))
 	}
+	_, tail, _ := strings.Cut(got, "tunnel log tail:\n")
+	tail, rest, closed := strings.Cut(tail, "end of tunnel log tail\n")
+	if !closed || rest != "" {
+		t.Fatalf("tail is not closed: %q", got)
+	}
+	for _, line := range strings.Split(strings.TrimSuffix(tail, "\n"), "\n") {
+		if !strings.HasPrefix(line, "  | ") {
+			t.Fatalf("unquoted tail line %q", line)
+		}
+	}
 	for _, forbidden := range []string{"must-not-appear", "proxy-secret", "signature-secret"} {
 		if strings.Contains(got, forbidden) {
 			t.Fatalf("tail leaked %q", forbidden)

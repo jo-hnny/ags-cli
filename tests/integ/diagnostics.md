@@ -1,4 +1,4 @@
-# Error diagnostics coverage (Issue #138, steps 1 and 2)
+# Error diagnostics coverage (Issue #138, steps 1–3)
 
 The root `renderExecuteError` is the only error-chain printer. It prints before
 checking the already-written-output marker. The marker carries a cause but never
@@ -115,3 +115,95 @@ new CLI wrappers on their existing paths.
   and off: the old string-only message loses the expected auth failure/exit 4.
 
 No credentialed live cloud or real mobile-device verification is claimed here.
+
+## Stage 3: mobile WebSocket boundary
+
+Startup/recovery probes and runtime connections share handshake observation
+capture. Local HTTP rejection and delayed-response tests verify endpoint, effective
+budget, HTTP status and allowlisted request IDs. Injected DNS/refused-connection
+errors preserve causes without inventing response metadata. Parent/child process
+tests assert those details survive readiness forwarding. URL user info, queries,
+fragments, response bodies and non-allowlisted headers are not retained in the
+new metadata; unsafe or oversized request IDs are omitted.
+Running the new parent/child handshake assertions against the stage-2 handler
+and transport via a Go overlay fails with debug on and off because Endpoint,
+TimeoutMs and RequestId are missing.
+
+## Stage 3: remaining boundaries
+
+- Local subprocess failures retain Program and observed subprocess_start/exit;
+  tunnel startup additionally retains its existing ready/wait/exit stages and
+  bounded redacted log diagnostics. A real test subprocess exits 17 in buffered
+  and streaming ADB modes without turning that business result into an error.
+- File PathErrors retain Operation/Path and the OS cause. Request input and file
+  upload/download usage errors no longer discard causes. A failed download to
+  stdout returns the read/write failure instead of reporting success.
+- Configuration read errors retain OS causes. Parse/decode errors retain safe
+  path/location metadata and a value-free reason: the TOML syntax message with
+  wrapped causes dropped and input characters redacted, or the field name with
+  its expected and actual types. Raw parser input is deliberately not retained
+  because unloaded credential values are not yet registered with the redactor.
+  Tests cover string, character, numeric and type errors with a credential-like
+  value and fail if either the character redaction or the cause truncation is
+  removed.
+- Exec/code, file transfer and webshell SDK errors carry remote_execute and the
+  operation/instance. Connection preparation carries remote_connect. PTY uses
+  local_terminal, remote_start and remote_stream based on observed progress.
+  Existing remote program stdout/stderr and nonzero-exit semantics are unchanged.
+- Typed and raw Cloud API routes retain target/action and known caller deadline
+  budgets. The SDK does not expose HTTP status/headers at this error boundary:
+  those fields are omitted, while original SDK Code/Message/RequestId survive.
+- Real loopback TLS HTTP and WebSocket rejections exercise the shared instance/
+  deployment proxy. Logs contain observed status and allowlisted request ID,
+  never response bodies, arbitrary headers, credentials or URL queries. HTTP
+  rejection bodies are still forwarded as business responses.
+- Text failures display available metadata; schema and explain describe the
+  optional fields. stable and preview share these implementations.
+
+Validation is local fault injection, not a credentialed cloud/mobile/Windows
+runtime verification. No DNS/TCP/TLS tracing, automatic retries, or private SDK
+transport replacement is introduced.
+
+Regression check: a Go overlay that disables boundary propagation and restores
+stage-2 proxy/download implementations makes the new local-file, process-start,
+cloud-context, HTTP/WS rejection, NDJSON connection and failed-download tests
+fail on their missing metadata or swallowed failure assertions.
+
+Additional inventory: the unused OpenBrowser utility has no command caller;
+process-identity `ps` fallback returns a boolean and intentionally keeps its
+existing cleanup policy; registryHTTP belongs to patch-test fixture setup, not
+the shipped command request path. These helpers do not emit CLI failures and
+are not converted into new failure envelopes by this change.
+
+## Reviewer regression guards
+
+Typed Cloud API wrappers use the generic `client.CallCloud` helper to capture
+context before invocation and preserve classification. AST tests recursively scan
+repository Go production sources, including anonymous functions and files excluded
+by platform/channel build tags. They reject SDK Action calls/method references
+outside the helper and require the Action to match its SDK method. Action names
+are derived from the installed SDK, including context-free variants, rather than
+from a maintained list or a general `WithContext` suffix. This is a conservative
+name-based guard, not full Go type analysis; unrelated methods with the exact same
+Action name can still fail loudly. Locally declared receiver function fields are
+recognized as injection hooks. Test files, the `tests/` harness, testdata, hidden
+directories and vendor dependencies are excluded. In-memory mutations
+remove a real helper invocation in each file; negative fixtures cover new direct
+calls, context-free calls, method aliases and mismatched Actions. A new third file
+in a new command directory is injected into a filesystem fixture to prove that
+file discovery catches direct calls and aliases even without an SDK import or an
+active build tag.
+
+HTTP proxy business responses (4xx) use `[HTTP]` only in verbose mode; 5xx always
+use `[ERROR]`. Both retain
+observed status and allowlisted request IDs. Tests cover 401/404/503 with verbose
+on/off. WebSocket handshake rejection remains a connection failure with `[ERROR]`.
+Application paths may carry credentials, so proxy diagnostics record only the
+upstream origin by default. Verbose mode, which the user enables explicitly, adds
+the request path. Queries are never logged.
+
+Context collection supports joined/multiple-wrapped errors. Inner context wins
+within one chain, existing classified details remain authoritative, and the first
+metadata-bearing branch wins at a join. Sibling fields are not combined; all causes
+remain available to `errors.Is/As`. Tests exercise both `errors.Join` and multiple
+`%w`, including filesystem fallback and conflicting sibling metadata.

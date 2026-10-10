@@ -102,13 +102,13 @@ func explainCodeData(code string) (ExplainData, bool) {
 	case "INTERNAL_ERROR":
 		base.Kind = output.KindGenericError
 		base.ExitCode = output.ExitGenericError
-		base.Meaning = "The CLI could not classify the error. The original cause is available in --debug stderr diagnostics."
+		base.Meaning = "The CLI could not classify the error. Optional Stage, Operation, Program, Path, Field or Endpoint details identify the observed boundary. The original cause is available in --debug stderr diagnostics; config parse errors retain safe locations instead of quoting unloaded credentials."
 		base.AffectedCommands = allCommandNames()
 		base.Fix = []string{"agr doctor", "Rerun with --debug to inspect the redacted error chain on stderr."}
 	case "NETWORK_ERROR", "DNS_ERROR":
 		base.Kind = output.KindNetwork
 		base.ExitCode = output.ExitNetwork
-		base.Meaning = "A network operation failed. Mobile tunnel handshake failures may include Failure.Details.Stage=websocket_handshake and HTTPStatus when a response was received."
+		base.Meaning = "A network operation failed. Mobile tunnel handshakes report Failure.Details.Stage=websocket_handshake, Endpoint and TimeoutMs (budget, not elapsed time); HTTPStatus and an allowlisted RequestId are included only when observed."
 		base.AffectedCommands = allCommandNames()
 		base.Fix = []string{"Check the endpoint, network, DNS, and access credentials.", "Use --debug for the observed cause. A retry may repeat a business operation; check its outcome first."}
 	case "TUNNEL_START_FAILED", "TUNNEL_EXITED", "TUNNEL_PROTOCOL_ERROR", "TUNNEL_READY_TIMEOUT":
@@ -129,7 +129,7 @@ func explainCodeData(code string) (ExplainData, bool) {
 	case "TUNNEL_AUTH_FAILED":
 		base.Kind = output.KindAuthOrPermission
 		base.ExitCode = output.ExitAuthOrPermission
-		base.Meaning = "The tunnel WebSocket handshake received HTTP 401 or 403."
+		base.Meaning = "The tunnel WebSocket handshake received HTTP 401 or 403. Failure.Details includes Endpoint and TimeoutMs; RequestId is included when a valid allowlisted response header is available."
 		base.AffectedCommands = []string{"instance.mobile.tunnel", "instance.mobile.connect"}
 		base.Fix = []string{"Check the tunnel access token and permissions, then reconnect."}
 	case "TUNNEL_ERROR":
@@ -255,6 +255,12 @@ func explainCodeData(code string) (ExplainData, bool) {
 			base.Meaning = "One or more request parameters are invalid or missing."
 			base.AffectedCommands = []string{}
 			base.Fix = []string{"Check the command flags or --request payload.", "agr schema <command> -o json"}
+		case code == "CLIENTERROR.NETWORKERROR":
+			base.Kind = output.KindNetwork
+			base.ExitCode = output.ExitNetwork
+			base.Meaning = "The CLI received no Tencent Cloud API response, for example because DNS failed, the connection was refused or the request timed out. Failure.Details includes Stage=http_request, Operation and Endpoint when available."
+			base.AffectedCommands = []string{}
+			base.Fix = []string{"Check network connectivity, proxy settings and cloud_endpoint (AGR_CLOUD_ENDPOINT).", "agr doctor", "The request may have reached the service; check the operation's outcome before retrying."}
 		default:
 			base.Kind = output.KindGenericError
 			base.ExitCode = output.ExitGenericError

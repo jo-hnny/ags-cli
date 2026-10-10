@@ -73,6 +73,7 @@ func (e *CLIError) WithCause(cause error) *CLIError {
 	}
 	copy := *e
 	copy.Cause = cause
+	copy.Failure = withErrorContext(e.Failure, cause)
 	return &copy
 }
 

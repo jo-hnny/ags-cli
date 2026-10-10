@@ -18,6 +18,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/TencentCloudAgentRuntime/ags-cli/internal/output"
 	"github.com/gorilla/websocket"
 )
 
@@ -132,6 +133,7 @@ func (p *Proxy) Start() (string, error) {
 		Scheme: "https",
 		Host:   p.targetHost,
 	}
+	upstreamOrigin := targetURL.String()
 
 	reverseProxy := httputil.NewSingleHostReverseProxy(targetURL)
 
@@ -164,6 +166,13 @@ func (p *Proxy) Start() (string, error) {
 	}
 	reverseProxy.ModifyResponse = func(response *http.Response) error {
 		p.captureAffinityResponse(response.Request.Context(), response.Header)
+		if response.StatusCode >= 500 || (response.StatusCode >= 400 && p.options.Verbose) {
+			level := "HTTP"
+			if response.StatusCode >= 500 {
+				level = "ERROR"
+			}
+			p.logger.Printf("[%s] Proxy upstream response: %v", level, output.HTTPContext(context.Background(), "http_response", p.diagnosticEndpoint(upstreamOrigin, response.Request.URL), 0, response))
+		}
 		return nil
 	}
 
@@ -171,7 +180,7 @@ func (p *Proxy) Start() (string, error) {
 	// to the client when verbose mode is enabled to avoid leaking internal
 	// host names or network topology to network-accessible clients.
 	reverseProxy.ErrorHandler = func(w http.ResponseWriter, r *http.Request, err error) {
-		p.logger.Printf("[ERROR] Proxy error: %v", err)
+		p.logger.Printf("[ERROR] Proxy error: %v: %v", output.HTTPContext(context.Background(), "http_request", p.diagnosticEndpoint(upstreamOrigin, r.URL), 0, nil), err)
 		w.WriteHeader(http.StatusBadGateway)
 		if p.options.Verbose {
 			fmt.Fprintf(w, "Bad Gateway: %v", err)
@@ -261,7 +270,8 @@ func (p *Proxy) Stop() {
 // handleWebSocket bridges a WebSocket connection from the local client to the remote sandbox.
 func (p *Proxy) handleWebSocket(w http.ResponseWriter, r *http.Request, upgrader *websocket.Upgrader) {
 	// Build upstream WebSocket URL
-	upstreamURL := fmt.Sprintf("wss://%s%s", p.targetHost, r.URL.RequestURI())
+	upstreamOrigin := "wss://" + p.targetHost
+	upstreamURL := upstreamOrigin + r.URL.RequestURI()
 
 	// Preserve application headers while replacing the gateway credential and
 	// removing client-side WebSocket handshake headers that gorilla generates.
@@ -281,13 +291,20 @@ func (p *Proxy) handleWebSocket(w http.ResponseWriter, r *http.Request, upgrader
 		},
 	}
 
+	details := output.HTTPContext(p.ctx, "ws_handshake", p.diagnosticEndpoint(upstreamOrigin, r.URL), dialer.HandshakeTimeout, nil)
 	upstreamConn, upstreamResp, err := dialer.DialContext(p.ctx, upstreamURL, upstreamHeaders)
 	// Close the HTTP response body if present (dial failure with a non-101 HTTP response).
 	if upstreamResp != nil && upstreamResp.Body != nil {
 		defer func() { _ = upstreamResp.Body.Close() }()
 	}
 	if err != nil {
-		p.logger.Printf("[ERROR] WebSocket upstream dial failed: %v", err)
+		if upstreamResp != nil {
+			details["HTTPStatus"] = upstreamResp.StatusCode
+			if id := output.ResponseRequestID(upstreamResp.Header); id != "" {
+				details["RequestId"] = id
+			}
+		}
+		p.logger.Printf("[ERROR] WebSocket upstream dial failed: %v: %v", details, err)
 		// Only expose error details in verbose mode to avoid leaking internal
 		// host names or network topology to network-accessible clients.
 		errMsg := "Bad Gateway"
@@ -365,6 +382,15 @@ func (p *Proxy) handleWebSocket(w http.ResponseWriter, r *http.Request, upgrader
 	if p.options.Verbose {
 		p.logger.Printf("[WS] WebSocket connection closed: %s", r.URL.Path)
 	}
+}
+
+// Application paths may carry credentials, so only explicitly requested verbose
+// diagnostics include them. Queries are never logged.
+func (p *Proxy) diagnosticEndpoint(origin string, requestURL *url.URL) string {
+	if p.options.Verbose {
+		return origin + requestURL.EscapedPath()
+	}
+	return origin
 }
 
 type requestTokenKey struct{}

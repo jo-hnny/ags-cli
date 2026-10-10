@@ -3,6 +3,7 @@ package request
 import (
 	"encoding/json"
 	"errors"
+	"os"
 	"testing"
 
 	"github.com/TencentCloudAgentRuntime/ags-cli/internal/output"
@@ -61,5 +62,14 @@ func TestMergePositionalRejectsMismatch(t *testing.T) {
 	_, err := MergePositional(`{"InstanceId":"ins-other"}`, "InstanceId", "ins-1")
 	if code := errorCode(err); code != "REQUEST_ARG_CONFLICT" {
 		t.Fatalf("code=%s err=%v", code, err)
+	}
+}
+
+func TestMissingRequestRetainsCause(t *testing.T) {
+	path := t.TempDir() + "/missing.json"
+	_, err := ReadFlag("@" + path)
+	got := output.ClassifyError(err)
+	if got.Failure.Code != "INVALID_REQUEST_INPUT" || got.ExitCode != 2 || !errors.Is(got, os.ErrNotExist) || got.Failure.Details["Path"] != path {
+		t.Fatalf("lost request context: %#v", got.Failure)
 	}
 }

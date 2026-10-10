@@ -3,6 +3,7 @@ package proxy
 import (
 	"context"
 	"fmt"
+	"log"
 	"net"
 	"os/signal"
 	"strconv"
@@ -134,6 +135,7 @@ func runProxy(ctx context.Context, req command.Request, deps command.Deps, rt Ru
 	listenAddr := net.JoinHostPort(address, strconv.Itoa(localPort))
 
 	proxy, err := rt.NewProxy(dataplaneproxy.Options{
+		Logger:        log.New(cli.DiagnosticWriter(deps.IO.ErrOut), "", log.LstdFlags),
 		InstanceID:    instanceID,
 		Domain:        domain,
 		RemotePort:    remotePort,

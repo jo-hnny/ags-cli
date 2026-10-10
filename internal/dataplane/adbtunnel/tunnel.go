@@ -16,7 +16,6 @@ import (
 	"log"
 	"math"
 	"net"
-	"net/http"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -202,35 +201,9 @@ func (t *Tunnel) Probe() error {
 }
 
 func (t *Tunnel) probe(timeout time.Duration) error {
-	dialer := t.newDialer()
-
-	headers := http.Header{}
-	token, err := t.options.TokenProvider()
+	wsConn, err := t.dialWebSocket(t.ctx, t.newDialer(), timeout)
 	if err != nil {
-		return fmt.Errorf("token provider failed: %w", err)
-	}
-	headers.Add("Authorization", "Bearer "+token)
-	if t.options.Endpoint != "" {
-		headers.Set("Host", t.e2bHost)
-	}
-
-	probeCtx, probeCancel := context.WithTimeout(t.ctx, timeout)
-	defer probeCancel()
-
-	wsConn, response, err := dialer.DialContext(probeCtx, t.wsURL, headers)
-	if err != nil {
-		var netErr net.Error
-		if probeCtx.Err() != nil && !errors.Is(err, probeCtx.Err()) {
-			err = errors.Join(err, probeCtx.Err())
-		} else if errors.As(err, &netErr) && netErr.Timeout() && !errors.Is(err, context.DeadlineExceeded) {
-			// The socket deadline mirrors probeCtx's and can fire before its timer.
-			err = errors.Join(err, context.DeadlineExceeded)
-		}
-		failure := &HandshakeError{Cause: err}
-		if response != nil {
-			failure.HTTPStatus = response.StatusCode
-		}
-		return failure
+		return err
 	}
 
 	// Send a clean close and disconnect immediately
@@ -243,22 +216,6 @@ func (t *Tunnel) probe(timeout time.Duration) error {
 
 	return nil
 }
-
-// HandshakeError records only observations available at the WebSocket boundary.
-// It never retains response bodies or authentication headers.
-type HandshakeError struct {
-	Cause      error
-	HTTPStatus int
-}
-
-func (e *HandshakeError) Error() string {
-	if e.HTTPStatus != 0 {
-		return fmt.Sprintf("upstream WS handshake failed (HTTP %d): %v", e.HTTPStatus, strings.ReplaceAll(fmt.Sprint(e.Cause), "\n", "; "))
-	}
-	return fmt.Sprintf("upstream WS handshake failed: %s", strings.ReplaceAll(fmt.Sprint(e.Cause), "\n", "; "))
-}
-
-func (e *HandshakeError) Unwrap() error { return e.Cause }
 
 func (t *Tunnel) newDialer() *websocket.Dialer {
 	dialer := &websocket.Dialer{
@@ -445,20 +402,9 @@ func (t *Tunnel) startRecoveryProbe() {
 // Returns (preempted, error) where preempted=true means server sent close code 4001.
 func (t *Tunnel) handleConnection(localConn net.Conn) (preempted bool, err error) {
 	dialer := t.newDialer()
-
-	headers := http.Header{}
-	token, tokenErr := t.options.TokenProvider()
-	if tokenErr != nil {
-		return false, fmt.Errorf("token provider failed: %w", tokenErr)
-	}
-	headers.Add("Authorization", "Bearer "+token)
-	if t.options.Endpoint != "" {
-		headers.Set("Host", t.e2bHost)
-	}
-
-	wsConn, _, dialErr := dialer.DialContext(t.ctx, t.wsURL, headers)
+	wsConn, dialErr := t.dialWebSocket(t.ctx, dialer, dialer.HandshakeTimeout)
 	if dialErr != nil {
-		return false, fmt.Errorf("WebSocket dial failed: %w", dialErr)
+		return false, dialErr
 	}
 
 	t.logger.Printf("[INFO] WebSocket connected to %s", t.wsURL)

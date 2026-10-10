@@ -491,8 +491,30 @@ mobile tunnel 获取 token 失败时保留云 API 分类和 RequestId；超时�
 仅在成功创建日志文件时，失败结果才包含 `Failure.Details.LogPath`，文本输出也会显示该路径。
 `--debug` 会转发给子进程，并在父进程 stderr 中单独显示 `tunnel log tail:`：
 从文件末尾 64 KiB 中取最多 40 行，再限制为末尾 8 KiB 加截断标记。
+摘录每行以 `  | ` 开头，并以 `end of tunnel log tail` 结束，避免把子进程自身的错误输出误认为父进程错误。
 tunnel 日志记录在落盘前就会脱敏和限长，尾部日志显示前会再次脱敏。
 日志文件创建失败不改变原始错误分类，也不会返回不存在的日志路径。
+
+mobile WebSocket 握手诊断包含 `Endpoint`（不含用户信息、query 和 fragment）及
+`TimeoutMs`（实际生效的握手预算，不是已耗时）。探测预算为 10 秒，运行期连接为
+15 秒；更短的 context deadline 会缩短预算。DNS、连接和 TLS 失败仍统一记录为
+`websocket_handshake`，不推测内部网络阶段；没有收到响应则省略 HTTP 状态。
+请求 ID 仅依次读取 `X-TC-RequestId`、`X-Request-Id`，限制为不含空格的可打印 ASCII、
+最多 256 字节，不保留其他响应头和响应正文。启动探测、恢复探测和运行期连接失败
+均记录这些观察结果；启动失败还会跨后台就绪协议保留它们。token 获取失败保持独立分类。
+
+其他边界按需补充 `Stage`、`Operation`，以及 `Program`、`Path`、`Field` 或
+`InstanceId`。普通文本错误显示可用的边界信息；JSON/NDJSON 放在 `Failure.Details`。
+文件错误保留底层 OS cause；配置解析或类型转换失败显示路径、可用的行列位置，
+以及不含配置值的原因（如 TOML 语法错误，或字段名及其期望类型）。
+不引用尚未成功加载的配置值，出错位置的输入字符显示为 `[REDACTED]`。连接准备失败使用 `remote_connect`；SDK 执行调用失败
+使用 `remote_execute`，不据此推断远端程序是否已启动。PTY 在收到启动事件前使用
+`remote_start`，之后使用 `remote_stream`。
+云 SDK 保留 Code/Message/RequestId，并补目标、操作及已知调用预算；SDK 未提供的
+HTTP 状态和响应头不填猜测值。没有收到 API 响应时，`ClientError.NetworkError`
+归类为 `Kind=network`，但仍为 `Retryable=false`：SDK 无法说明请求是否已到达服务端，
+重试前请先确认操作结果。代理 HTTP/WS 失败在脱敏、限长的 stderr 日志中记录
+实际状态和白名单请求 ID，转发响应及流式协议保持不变。
 
 远端程序正常返回非零退出码时，保留已有输出和退出码语义。诊断增强不代表业务操作可安全重试。
 

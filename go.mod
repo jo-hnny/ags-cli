@@ -6,6 +6,7 @@ require (
 	connectrpc.com/connect v1.18.1
 	github.com/TencentCloudAgentRuntime/ags-go-sdk v0.0.10
 	github.com/evanphx/json-patch/v5 v5.9.11
+	github.com/go-viper/mapstructure/v2 v2.4.0
 	github.com/gofrs/flock v0.13.0
 	github.com/gorilla/websocket v1.5.3
 	github.com/itchyny/gojq v0.12.19
@@ -29,7 +30,6 @@ require (
 	github.com/fsnotify/fsnotify v1.9.0 // indirect
 	github.com/go-logr/logr v1.4.3 // indirect
 	github.com/go-task/slim-sprig/v3 v3.0.0 // indirect
-	github.com/go-viper/mapstructure/v2 v2.4.0 // indirect
 	github.com/google/go-cmp v0.7.0 // indirect
 	github.com/google/pprof v0.0.0-20260402051712-545e8a4df936 // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
