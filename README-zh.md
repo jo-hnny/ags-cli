@@ -431,7 +431,8 @@ agr instance exec "$id" --stream -o ndjson -- tail -f app.log
 --secret-key      腾讯云 SecretKey
 --non-interactive 禁用交互提示
 --no-color        关闭 ANSI 颜色
---debug           将调试信息写到 stderr
+--debug           将调试信息写到 stderr，并在本地保存完整脱敏日志
+--debug-log       将调试日志追加到指定文件（自动开启 --debug）
 ```
 
 环境变量：`TENCENTCLOUD_SECRET_ID`、`TENCENTCLOUD_SECRET_KEY`、
@@ -445,6 +446,77 @@ agr instance exec "$id" --stream -o ndjson -- tail -f app.log
 配置优先级：`--flag` > 环境变量 > `~/.agr/config.toml` > 默认值。使用 `agr status` 查看当前生效值及其来源。
 
 ## 故障排查
+
+`--debug` 会将限长、脱敏后的错误链写到 stderr。JSON stdout 仍是单个 envelope，
+NDJSON 流仍只输出一次终止事件；未知错误在普通模式下仍显示 `INTERNAL_ERROR`。
+不生成堆栈转储或上传日志。
+
+脱敏只替换凭据值本身，不删除周围文字，失败原因保持完整。替换范围：按精确值（原文及 URL
+编码形式）替换当前生效的 SecretId/SecretKey/Token 以及 CLI 获取的 data-plane/deployment
+访问 token；`Bearer`/`Basic` 后 16 个字符以上的凭据；URL 密码和签名 query 值。
+不从文本中猜测其他请求头的值。
+
+`--debug`（或 `AGR_DEBUG=1`）还会将完整脱敏诊断和 stderr 保存到
+`~/.agr/logs/agr-<UTC 时间>-<随机后缀>.log`。可用 `--debug-log ./logs/agr.log`
+开启 debug 并追加到指定文件。命令成功或失败时都会在 stderr
+显示 `Debug log: <绝对路径>`。日志写入失败会给出警告，保留原命令结果和退出码。
+
+复制的 stderr（包括远端程序输出）完整写入，不限制单行长度；只替换上述已知凭据值，
+即使输出分段切开了凭据也能识别。远端程序自己的秘密 CLI 无从得知，不会脱敏，
+与 `kubectl logs` 一致。远端程序原始 stderr 仍及时、原样显示在终端。
+
+默认日志按进程新建，没有自动轮转或清理。后台 mobile tunnel 子进程跟随父进程最终生效的
+debug 设置（显式 `--debug=false` 优先于继承的 `AGR_DEBUG=1`），开启时创建自己的默认日志文件，
+不共用 `--debug-log` 指定的路径。若输出以可能是已知凭据开头的片段结束，
+该片段写为 `[REDACTED]`。不再需要的旧日志需自行删除。
+
+普通 text 错误和 JSON/NDJSON 的 Failure 字段（含嵌套 Details）也会脱敏；
+普通错误字符串不截断，仅终端 debug 诊断限制为 8 KiB 加 UTF-8 安全截断标记。
+URL 只替换密码和敏感 query 值；其他参数转义损坏时也不整段隐藏。
+Details 中以凭据或请求头命名的字段（如 `Authorization`、`Cookie`、`SecretKey`）会被替换；
+通用的 token/signature/sig 字段不仅凭名字隐藏。
+
+mobile tunnel 获取 token 失败时保留云 API 分类和 RequestId；超时、取消保留各自分类。
+握手 HTTP 401/403 返回 `TUNNEL_AUTH_FAILED`（退出码 4）。本地端口占用返回
+`PORT_IN_USE`（退出码 2），可换端口或使用 `--port 0`；其他未分类 tunnel 操作
+返回 `TUNNEL_ERROR` 并保留已观察到的原因。
+其他 WebSocket 握手失败使用 `NETWORK_ERROR`（退出码 1），并按实际观察附带
+`Failure.Details.Stage=websocket_handshake` 和 `HTTPStatus`，没有 HTTP 响应则省略状态码。
+字段说明见 `agr schema -o json` 的 `Data.FailureDetails` 和 `agr explain NETWORK_ERROR`。
+后台 `mobile connect` 保留子进程的结构化 Failure 和退出码，包括握手状态码和云 API RequestId。
+没有有效子进程 Failure 时，按实际观察到的阶段返回 `TUNNEL_START_FAILED`、
+`TUNNEL_EXITED`、`TUNNEL_PROTOCOL_ERROR` 或 `TUNNEL_READY_TIMEOUT`。
+取消和 context deadline 保留各自分类；启动失败后会终止并回收子进程，清理等待有时间上限。
+
+仅在成功创建日志文件时，失败结果才包含 `Failure.Details.LogPath`，文本输出也会显示该路径。
+`--debug` 会转发给子进程，并在父进程 stderr 中单独显示 `tunnel log tail:`：
+从文件末尾 64 KiB 中取最多 40 行，再限制为末尾 8 KiB 加截断标记。
+摘录每行以 `  | ` 开头，并以 `end of tunnel log tail` 结束，避免把子进程自身的错误输出误认为父进程错误。
+tunnel 日志记录在落盘前就会脱敏和限长，尾部日志显示前会再次脱敏。
+日志文件创建失败不改变原始错误分类，也不会返回不存在的日志路径。
+
+mobile WebSocket 握手诊断包含 `Endpoint`（不含用户信息、query 和 fragment）及
+`TimeoutMs`（实际生效的握手预算，不是已耗时）。探测预算为 10 秒，运行期连接为
+15 秒；更短的 context deadline 会缩短预算。DNS、连接和 TLS 失败仍统一记录为
+`websocket_handshake`，不推测内部网络阶段；没有收到响应则省略 HTTP 状态。
+请求 ID 仅依次读取 `X-TC-RequestId`、`X-Request-Id`，限制为不含空格的可打印 ASCII、
+最多 256 字节，不保留其他响应头和响应正文。启动探测、恢复探测和运行期连接失败
+均记录这些观察结果；启动失败还会跨后台就绪协议保留它们。token 获取失败保持独立分类。
+
+其他边界按需补充 `Stage`、`Operation`，以及 `Program`、`Path`、`Field` 或
+`InstanceId`。普通文本错误显示可用的边界信息；JSON/NDJSON 放在 `Failure.Details`。
+文件错误保留底层 OS cause；配置解析或类型转换失败显示路径、可用的行列位置，
+以及不含配置值的原因（如 TOML 语法错误，或字段名及其期望类型）。
+不引用尚未成功加载的配置值，出错位置的输入字符显示为 `[REDACTED]`。连接准备失败使用 `remote_connect`；SDK 执行调用失败
+使用 `remote_execute`，不据此推断远端程序是否已启动。PTY 在收到启动事件前使用
+`remote_start`，之后使用 `remote_stream`。
+云 SDK 保留 Code/Message/RequestId，并补目标、操作及已知调用预算；SDK 未提供的
+HTTP 状态和响应头不填猜测值。没有收到 API 响应时，`ClientError.NetworkError`
+归类为 `Kind=network`，但仍为 `Retryable=false`：SDK 无法说明请求是否已到达服务端，
+重试前请先确认操作结果。代理 HTTP/WS 失败在脱敏、限长的 stderr 日志中记录
+实际状态和白名单请求 ID，转发响应及流式协议保持不变。
+
+远端程序正常返回非零退出码时，保留已有输出和退出码语义。诊断增强不代表业务操作可安全重试。
 
 ```bash
 agr status

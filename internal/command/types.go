@@ -182,6 +182,9 @@ type Result struct {
 	Effects  []output.Effect
 	Failure  *output.Failure
 	ExitCode int
+	// Cause carries a local failure to diagnostics even when output was streamed.
+	// Remote program exit codes alone do not have a cause.
+	Cause error `json:"-"`
 	// StreamDone means the handler already streamed output and only the exit
 	// code should be propagated by the wrapper.
 	StreamDone bool

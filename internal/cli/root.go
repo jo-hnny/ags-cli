@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -31,6 +32,7 @@ var (
 	nonInteractive   bool
 	noColor          bool
 	debugFlag        bool
+	debugLogFlag     string
 	configInitErr    error
 	configBasicsErr  error
 	configCommandErr error
@@ -79,12 +81,12 @@ func init() {
 		hasJQ := jqExpr != "" || hasRawFlag("--jq")
 
 		if hasJQ && !hasRawOutputFlag("json") {
-			fmt.Fprintln(os.Stderr, "Error: --jq can only be used with explicit -o json")
-			os.Exit(output.ExitUsage)
+			fmt.Fprintln(ios.ErrOut, "Error: --jq can only be used with explicit -o json")
+			exitWithDebugLog(output.ExitUsage)
 		}
 		if wantNDJSON {
-			fmt.Fprintln(os.Stderr, "Error: -o ndjson is not supported with --help")
-			os.Exit(output.ExitUsage)
+			fmt.Fprintln(ios.ErrOut, "Error: -o ndjson is not supported with --help")
+			exitWithDebugLog(output.ExitUsage)
 		}
 
 		if wantJSON {
@@ -145,7 +147,8 @@ func init() {
 	rootCmd.PersistentFlags().StringVar(&jqExpr, "jq", "", "jq expression (only with -o json)")
 	rootCmd.PersistentFlags().BoolVar(&nonInteractive, "non-interactive", false, "Disable interactive behaviors")
 	rootCmd.PersistentFlags().BoolVar(&noColor, "no-color", false, "Disable ANSI color output")
-	rootCmd.PersistentFlags().BoolVar(&debugFlag, "debug", false, "Write debug diagnostics to stderr")
+	rootCmd.PersistentFlags().BoolVar(&debugFlag, "debug", false, "Write bounded diagnostics to stderr and full redacted logs to $HOME/.agr/logs/agr-*.log")
+	rootCmd.PersistentFlags().StringVar(&debugLogFlag, "debug-log", "", "Append full redacted debug logs to this file (enables --debug)")
 	rootCmd.PersistentFlags().BoolVar(&generateSkeleton, "generate-skeleton", false, "print an empty JSON request skeleton for request-based commands")
 }
 
@@ -178,6 +181,8 @@ func Execute() {
 	initIOStreams()
 	applyRawGlobalArgs(os.Args[1:])
 	initConfig()
+	startDebugLog()
+	defer closeDebugLog()
 	rootCmd.SetHelpCommand(newHelpCommand())
 	if err := explicitHelpTopicError(os.Args[1:]); err != nil {
 		renderExecuteError(rootCmd, err, nil)
@@ -316,7 +321,7 @@ func extractHelpTopics(args []string) []string {
 			break
 		}
 		switch arg {
-		case "-o", "--output", "--config", "--secret-id", "--secret-key", "--token", "--region", "--domain", "--cloud-endpoint", "--jq":
+		case "-o", "--output", "--config", "--secret-id", "--secret-key", "--token", "--region", "--domain", "--cloud-endpoint", "--jq", "--debug-log":
 			skipNext = true
 			continue
 		case "--no-color", "--non-interactive", "-h", "--help":
@@ -325,7 +330,7 @@ func extractHelpTopics(args []string) []string {
 		if strings.HasPrefix(arg, "-o") || strings.HasPrefix(arg, "--output=") ||
 			strings.HasPrefix(arg, "--config=") || strings.HasPrefix(arg, "--secret-id=") ||
 			strings.HasPrefix(arg, "--secret-key=") || strings.HasPrefix(arg, "--token=") || strings.HasPrefix(arg, "--region=") ||
-			strings.HasPrefix(arg, "--domain=") || strings.HasPrefix(arg, "--cloud-endpoint=") || strings.HasPrefix(arg, "--jq=") {
+			strings.HasPrefix(arg, "--domain=") || strings.HasPrefix(arg, "--cloud-endpoint=") || strings.HasPrefix(arg, "--jq=") || strings.HasPrefix(arg, "--debug-log=") {
 			continue
 		}
 		if strings.HasPrefix(arg, "-") {
@@ -342,8 +347,11 @@ func classifyCLIError(err error) *output.CLIError {
 		return output.ClassifyError(err)
 	}
 	if cliErr.ExitCode == output.ExitGenericError && isCobraUsageError(err) {
-		cliErr = output.NewUsageError("INVALID_USAGE", err.Error(), "Run 'agr --help' or 'agr schema -o json' to inspect valid commands and flags.")
+		cliErr = output.NewUsageError("INVALID_USAGE", err.Error(), "Run 'agr --help' or 'agr schema -o json' to inspect valid commands and flags.").WithCause(err)
 	}
+	copy := *cliErr
+	copy.Failure = sanitizeFailure(cliErr.Failure)
+	cliErr = &copy
 	return cliErr
 }
 
@@ -368,10 +376,11 @@ func commandSpecificUsageHint(cmd *cobra.Command, err error) string {
 }
 
 func renderExecuteError(cmd *cobra.Command, err error, updateCh <-chan *updatecheck.Result) {
+	debugError(err)
 	var envDone *envelopeAlreadyWritten
 	if errors.As(err, &envDone) {
 		printUpdateNotice(updateCh)
-		os.Exit(envDone.code)
+		exitWithDebugLog(envDone.code)
 	}
 	cliErr := classifyCLIError(err)
 	if cliErr != nil && cliErr.Failure != nil && cliErr.Failure.Code == "INVALID_USAGE" {
@@ -379,7 +388,6 @@ func renderExecuteError(cmd *cobra.Command, err error, updateCh <-chan *updatech
 			cliErr.Failure.Hint = hint
 		}
 	}
-	debugf("Debug: error=%T: %v\n", err, err)
 	if isJSON() || hasRawOutputFlag("json") {
 		cmdID := commandIDForJSONError(cmd, os.Args[1:])
 		env := output.NewFailedEnvelope(cmdID, withIdempotencyHint(cmdID, cliErr.Failure), config.GetBackend(), 0)
@@ -393,16 +401,16 @@ func renderExecuteError(cmd *cobra.Command, err error, updateCh <-chan *updatech
 			_ = output.RenderEnvelopeToStdout(jqEnv)
 			// JSON mode: notice is suppressed by printUpdateNotice's isJSON() check.
 			printUpdateNotice(updateCh)
-			os.Exit(output.ExitUsage)
+			exitWithDebugLog(output.ExitUsage)
 		}
 		// JSON mode: notice is suppressed by printUpdateNotice's isJSON() check.
 		printUpdateNotice(updateCh)
-		os.Exit(cliErr.ExitCode)
+		exitWithDebugLog(cliErr.ExitCode)
 	}
 	failure := withIdempotencyHint(commandIDForJSONError(cmd, os.Args[1:]), cliErr.Failure)
 	writeFailureText(ios.ErrOut, failure)
 	printUpdateNotice(updateCh)
-	os.Exit(cliErr.ExitCode)
+	exitWithDebugLog(cliErr.ExitCode)
 }
 
 // printUpdateNotice prints the background update notice (if any) before the
@@ -431,6 +439,14 @@ func writeFailureText(w io.Writer, failure *output.Failure) {
 	}
 	if requestID := failureRequestID(failure); requestID != "" {
 		fmt.Fprintf(w, "RequestId: %s\n", requestID)
+	}
+	if logPath, ok := failure.Details["LogPath"].(string); ok && logPath != "" {
+		fmt.Fprintf(w, "LogPath: %s\n", logPath)
+	}
+	for _, field := range []string{"Stage", "Operation", "Program", "Path", "Field", "Endpoint", "HTTPStatus", "TimeoutMs", "ExitCode", "Line", "Column"} {
+		if value, ok := failure.Details[field]; ok {
+			fmt.Fprintf(w, "%s: %v\n", field, value)
+		}
 	}
 	if failure.Hint != "" {
 		fmt.Fprintf(w, "Hint: %s\n", failure.Hint)
@@ -468,7 +484,7 @@ func renderJSONSchemaEnvelope(commandID string, cmd *cobra.Command, args []strin
 		if jqErr := writeEnvelope(ios.Out, commandID, "failed", nil, cliErr.Failure, nil, nil, dm, nil); jqErr != nil {
 			return output.NewUsageError("INVALID_JQ_EXPRESSION", jqErr.Error(), "Check your --jq expression syntax.")
 		}
-		return &envelopeAlreadyWritten{code: cliErr.ExitCode}
+		return &envelopeAlreadyWritten{code: cliErr.ExitCode, cause: err}
 	}
 
 	if result == nil {
@@ -490,7 +506,7 @@ func renderJSONSchemaEnvelope(commandID string, cmd *cobra.Command, args []strin
 		return output.NewUsageError("INVALID_JQ_EXPRESSION", jqErr.Error(), "Check your --jq expression syntax.")
 	}
 	if result.ExitCode != 0 {
-		return &envelopeAlreadyWritten{code: result.ExitCode}
+		return &envelopeAlreadyWritten{code: result.ExitCode, cause: resultDiagnosticCause(result)}
 	}
 	return nil
 }
@@ -543,7 +559,7 @@ func extractCommandTokens(args []string) []string {
 			break
 		}
 		switch arg {
-		case "-o", "--output", "--config", "--secret-id", "--secret-key", "--token", "--region", "--domain", "--cloud-endpoint", "--jq":
+		case "-o", "--output", "--config", "--secret-id", "--secret-key", "--token", "--region", "--domain", "--cloud-endpoint", "--jq", "--debug-log":
 			skipNext = true
 			continue
 		case "--no-color", "--non-interactive", "-h", "--help", "--version", "-v":
@@ -552,7 +568,7 @@ func extractCommandTokens(args []string) []string {
 		if strings.HasPrefix(arg, "-o") || strings.HasPrefix(arg, "--output=") ||
 			strings.HasPrefix(arg, "--config=") || strings.HasPrefix(arg, "--secret-id=") ||
 			strings.HasPrefix(arg, "--secret-key=") || strings.HasPrefix(arg, "--token=") || strings.HasPrefix(arg, "--region=") ||
-			strings.HasPrefix(arg, "--domain=") || strings.HasPrefix(arg, "--cloud-endpoint=") || strings.HasPrefix(arg, "--jq=") {
+			strings.HasPrefix(arg, "--domain=") || strings.HasPrefix(arg, "--cloud-endpoint=") || strings.HasPrefix(arg, "--jq=") || strings.HasPrefix(arg, "--debug-log=") {
 			continue
 		}
 		if strings.HasPrefix(arg, "-") {
@@ -623,6 +639,9 @@ func shouldAllowDiagnosticOutputOverride(cmd *cobra.Command) bool {
 	}
 }
 
+// A raw --debug value overrides AGR_DEBUG before Cobra parses flags.
+var debugFlagExplicit bool
+
 func applyRawGlobalArgs(args []string) {
 	for i := 0; i < len(args); i++ {
 		arg := args[i]
@@ -680,6 +699,18 @@ func applyRawGlobalArgs(args []string) {
 		case strings.HasPrefix(arg, "--cloud-endpoint="):
 			cloudEndpoint = strings.TrimPrefix(arg, "--cloud-endpoint=")
 		case arg == "--debug":
+			debugFlag, debugFlagExplicit = true, true
+		case strings.HasPrefix(arg, "--debug="):
+			// Invalid values are left for Cobra to reject.
+			if value, err := strconv.ParseBool(strings.TrimPrefix(arg, "--debug=")); err == nil {
+				debugFlag, debugFlagExplicit = value, true
+			}
+		case arg == "--debug-log" && i+1 < len(args):
+			debugLogFlag = args[i+1]
+			debugFlag = true
+			i++
+		case strings.HasPrefix(arg, "--debug-log="):
+			debugLogFlag = strings.TrimPrefix(arg, "--debug-log=")
 			debugFlag = true
 		case arg == "--no-color":
 			noColor = true
@@ -762,7 +793,7 @@ func initConfig() {
 	configuredOutput = ""
 	config.SetConfigFile(cfgFile)
 	if err := config.Init(); err != nil {
-		configInitErr = output.NewUsageError("CONFIG_INIT_FAILED", err.Error(), "Fix the config file path or TOML syntax, then rerun the command.")
+		configInitErr = output.NewUsageError("CONFIG_INIT_FAILED", err.Error(), "Fix the config file path or TOML syntax, then rerun the command.").WithCause(err)
 	}
 	// Merge env vars into interactive/color flags
 	if os.Getenv("NO_COLOR") != "" {
@@ -775,7 +806,7 @@ func initConfig() {
 	if os.Getenv("AGR_NON_INTERACTIVE") == "1" {
 		nonInteractive = true
 	}
-	if os.Getenv("AGR_DEBUG") == "1" {
+	if os.Getenv("AGR_DEBUG") == "1" && !debugFlagExplicit || debugLogFlag != "" {
 		debugFlag = true
 	}
 

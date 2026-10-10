@@ -93,6 +93,7 @@ func runDownload(ctx context.Context, req command.Request, deps command.Deps) (*
 	}
 	if testDP := cli.TestDataPlane(); testDP != nil {
 		reader, size, err := testDP.Download(ctx, instanceID, remotePath)
+		err = output.WithContext(err, map[string]any{"Stage": "remote_execute", "Operation": "file.download", "InstanceId": instanceID})
 		if err != nil {
 			return nil, err
 		}
@@ -104,6 +105,7 @@ func runDownload(ctx context.Context, req command.Request, deps command.Deps) (*
 		return nil, fmt.Errorf("failed to connect to instance %s: %w", instanceID, err)
 	}
 	reader, err := sandbox.Files.Read(ctx, remotePath, &filesystem.ReadConfig{User: cli.ResolveUser(stringFlag(req, "user"))})
+	err = output.WithContext(err, map[string]any{"Stage": "remote_execute", "Operation": "file.download", "InstanceId": instanceID})
 	if err != nil {
 		return nil, fmt.Errorf("failed to read remote file: %w", err)
 	}
@@ -112,16 +114,21 @@ func runDownload(ctx context.Context, req command.Request, deps command.Deps) (*
 
 func writeDownloadResult(reader io.Reader, size int64, remotePath, localPath string, stdout io.Writer) (*command.Result, error) {
 	if localPath == "-" {
-		_, _ = io.Copy(stdout, reader)
+		if _, err := io.Copy(stdout, reader); err != nil {
+			return nil, output.WithContext(err, map[string]any{"Stage": "file_transfer", "Operation": "copy", "Path": "stdout"})
+		}
 		return &command.Result{StreamDone: true}, nil
 	}
 	f, err := os.Create(localPath)
 	if err != nil {
-		return nil, output.NewUsageError("INVALID_LOCAL_PATH", fmt.Sprintf("failed to create local file: %v", err), "Ensure the destination path is writable.")
+		return nil, output.NewUsageError("INVALID_LOCAL_PATH", fmt.Sprintf("failed to create local file: %v", err), "Ensure the destination path is writable.").WithCause(err)
 	}
 	defer func() { _ = f.Close() }()
 	n, err := io.Copy(f, reader)
 	if err != nil {
+		return nil, output.WithContext(err, map[string]any{"Stage": "file_transfer", "Operation": "copy", "Path": localPath})
+	}
+	if err := f.Close(); err != nil {
 		return nil, err
 	}
 	if size >= 0 {

@@ -10,6 +10,7 @@ import (
 	requestio "github.com/TencentCloudAgentRuntime/ags-cli/internal/cli/request"
 	"github.com/TencentCloudAgentRuntime/ags-cli/internal/command"
 	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
 )
 
 // clientTokenProperty is the request member that makes a mutation safely
@@ -120,13 +121,43 @@ func schemaFn(cmd *cobra.Command, args []string) (*CmdResult, error) {
 		return nil, fmt.Errorf("unknown command: %s", args[0])
 	}
 
-	data := map[string]any{"Commands": catalog.Ordered, "ExitCodes": exitCodeTable()}
+	data := map[string]any{
+		"Commands": catalog.Ordered, "ExitCodes": exitCodeTable(),
+		"GlobalFlags": globalFlagSchemas(cmd.Root()),
+		"FailureDetails": map[string]any{
+			"InstanceId": map[string]string{"Type": "string", "Description": "Sandbox instance involved in a failed remote connection or invocation."},
+			"Operation":  map[string]string{"Type": "string", "Description": "Observed operation or API action, without command arguments or payloads."},
+			"Program":    map[string]string{"Type": "string", "Description": "Local subprocess executable; arguments and environment are omitted."},
+			"Path":       map[string]string{"Type": "string", "Description": "Necessary local file path, or stdin/stdout for stream input/output."},
+			"Field":      map[string]string{"Type": "string", "Description": "Configuration or request field name, never its value."},
+			"Line":       map[string]string{"Type": "integer", "Description": "Configuration parser line when available."},
+			"Column":     map[string]string{"Type": "integer", "Description": "Configuration parser column when available."},
+
+			"LogPath":    map[string]string{"Type": "string", "Description": "Tunnel log path on startup failure, only when the log file was successfully created."},
+			"TimeoutMs":  map[string]string{"Type": "integer", "Description": "Known request, WebSocket handshake or readiness budget in milliseconds, captured before the operation (not elapsed time). Omitted when no budget is available."},
+			"Endpoint":   map[string]string{"Type": "string", "Description": "HTTP/WebSocket destination without user information, query or fragment."},
+			"RequestId":  map[string]string{"Type": "string", "Description": "Server request identifier when available. HTTP/WebSocket response headers accept X-TC-RequestId, then X-Request-Id; only nonempty printable ASCII values without spaces, at most 256 bytes, are retained. Other response headers and bodies are omitted."},
+			"ExitCode":   map[string]string{"Type": "integer", "Description": "Observed local subprocess exit code. Remote program exits remain business results."},
+			"Stage":      map[string]string{"Type": "string", "Description": "Observed boundary, such as http_request, websocket_handshake, subprocess_start, subprocess_exit, config_read, config_parse, config_decode, config_validate, request_input, request_parse, local_file, file_transfer, remote_connect, remote_execute, local_terminal, remote_start, remote_ready or remote_stream. Tunnel readiness retains start, exit, readiness_protocol and readiness_wait. Proxy logs use http_request, http_response and ws_handshake. No inferred DNS/TCP/TLS stage."},
+			"HTTPStatus": map[string]string{"Type": "integer", "Description": "Observed HTTP response status; absent when no response was received or the SDK does not expose it. Mobile handshake HTTP 401/403 uses TUNNEL_AUTH_FAILED. Proxy metadata appears in diagnostics, not a CLI response envelope."},
+		},
+	}
 	return OK(data, func(w io.Writer) {
 		fmt.Fprintf(w, "%-35s %s\n", "COMMAND", "SUMMARY")
 		for _, s := range catalog.Ordered {
 			fmt.Fprintf(w, "%-35s %s\n", s.Name, s.Summary)
 		}
 	}), nil
+}
+
+func globalFlagSchemas(root *cobra.Command) []FlagSchema {
+	var flags []FlagSchema
+	root.PersistentFlags().VisitAll(func(flag *pflag.Flag) {
+		if !flag.Hidden {
+			flags = append(flags, FlagSchema{Name: flag.Name, Shorthand: flag.Shorthand, Type: flag.Value.Type(), Description: flag.Usage, Default: flag.DefValue})
+		}
+	})
+	return flags
 }
 
 func renderSchemaText(w io.Writer, s CommandSchema) {
@@ -1109,6 +1140,7 @@ func buildHandwrittenSchemas() []CommandSchema {
 			RequiresAuth: true, SupportsJson: false, SupportsNdjson: false, SupportsJq: false,
 			SupportsRequest: false,
 			Args:            []ArgSchema{{Name: "InstanceId", Type: "string", Required: true}},
+			Failures:        []string{"TTY_REQUIRED"},
 		},
 		{
 			Name: "instance.browser.vnc", Summary: "Show VNC URL for browser sandbox",
@@ -1144,7 +1176,7 @@ func buildHandwrittenSchemas() []CommandSchema {
 			RequiresAuth: true, SupportsJson: true, SupportsNdjson: false, SupportsJq: true,
 			SupportsRequest: false,
 			Args:            []ArgSchema{{Name: "InstanceId", Type: "string", Required: true}},
-			Failures:        []string{"ADB_NOT_FOUND"},
+			Failures:        []string{"ADB_NOT_FOUND", "TUNNEL_START_FAILED", "TUNNEL_EXITED", "TUNNEL_PROTOCOL_ERROR", "TUNNEL_READY_TIMEOUT", "TUNNEL_AUTH_FAILED", "PORT_IN_USE", "TUNNEL_ERROR"},
 		},
 		{
 			Name: "instance.mobile.disconnect", Summary: "Disconnect from mobile sandbox",

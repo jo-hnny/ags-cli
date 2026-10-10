@@ -12,14 +12,23 @@ import (
 // ClassifyCloudError wraps a TencentCloud SDK error into a CLIError with
 // the correct kind/exit code based on the SDK error code. This eliminates
 // string matching in the generic ClassifyError.
-func ClassifyCloudError(err error) error {
+func ClassifyCloudError(err error) (result error) {
 	if err == nil {
 		return nil
+	}
+	var cliErr *output.CLIError
+	if errors.As(err, &cliErr) {
+		return cliErr.WithCause(err)
 	}
 	var sdkErr *sdkerrors.TencentCloudSDKError
 	if !errors.As(err, &sdkErr) {
 		return err
 	}
+	defer func() {
+		if classified, ok := result.(*output.CLIError); ok {
+			result = classified.WithCause(err)
+		}
+	}()
 
 	code := sdkErr.GetCode()
 	msg := sdkErr.GetMessage()
@@ -45,6 +54,11 @@ func ClassifyCloudError(err error) error {
 		return newCloudCLIError(output.KindUsage, code, msg, "Check the command flags or request payload and try again.", false, requestID)
 	case code == "RequestLimitExceeded":
 		return newCloudCLIError(output.KindRateLimit, code, msg, "Safe to retry after a brief wait.", true, requestID)
+	case code == "ClientError.NetworkError":
+		// The SDK discards the transport error, so a refused connection cannot be
+		// told apart from a request that reached the service before timing out.
+		return newCloudCLIError(output.KindNetwork, code, msg,
+			"Check network connectivity, proxy settings and cloud_endpoint. The request may have reached the service; check the operation's outcome before retrying.", false, requestID)
 	default:
 		return newCloudCLIError(output.KindGenericError, code, msg, "Run 'agr doctor' to diagnose configuration and connectivity.", false, requestID)
 	}

@@ -58,9 +58,24 @@ func ExitCodeForKind(kind string) int {
 type CLIError struct {
 	Failure  *Failure
 	ExitCode int
+	Cause    error `json:"-"`
 }
 
 func (e *CLIError) Error() string { return e.Failure.Message }
+
+func (e *CLIError) Unwrap() error { return e.Cause }
+
+// WithCause preserves classification without mutating an error already in the
+// cause chain (which would create a cycle for wrapped CLI errors).
+func (e *CLIError) WithCause(cause error) *CLIError {
+	if original, ok := cause.(*CLIError); ok && original == e {
+		return e
+	}
+	copy := *e
+	copy.Cause = cause
+	copy.Failure = withErrorContext(e.Failure, cause)
+	return &copy
+}
 
 // NewCLIError creates a CLIError from a Failure.
 func NewCLIError(f *Failure) *CLIError {
@@ -93,10 +108,11 @@ func NewRemoteExecutionError(code, message, hint string) *CLIError {
 }
 
 // ClassifyError translates a Go error into a CLIError.
-func ClassifyError(err error) *CLIError {
+func ClassifyError(err error) (result *CLIError) {
 	if err == nil {
 		return nil
 	}
+	defer func() { result = result.WithCause(err) }()
 
 	var cliErr *CLIError
 	if errors.As(err, &cliErr) {

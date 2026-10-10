@@ -115,6 +115,7 @@ func runCode(ctx context.Context, req cmdcore.Request, deps cmdcore.Deps) (*cmdc
 	}
 	if testDP := cli.TestDataPlane(); testDP != nil && !opts.Stream {
 		stdout, stderrText, results, remoteErr, count, err := testDP.RunCode(ctx, instanceID, codeStr, opts.Language)
+		err = output.WithContext(err, map[string]any{"Stage": "remote_execute", "Operation": "code.run", "InstanceId": instanceID})
 		if err != nil {
 			resolved.CleanupForPreExecutionFailure()
 			return nil, err
@@ -154,6 +155,7 @@ func runCode(ctx context.Context, req cmdcore.Request, deps cmdcore.Deps) (*cmdc
 			OnStderr: func(s string) { fmt.Fprint(deps.IO.ErrOut, s) },
 		}
 		result, err := sandbox.Code.RunCode(ctx, codeStr, runConfig, callbacks)
+		err = output.WithContext(err, map[string]any{"Stage": "remote_execute", "Operation": "code.run", "InstanceId": instanceID})
 		if err != nil {
 			resolved.Cleanup(false)
 			return nil, err
@@ -171,6 +173,7 @@ func runCode(ctx context.Context, req cmdcore.Request, deps cmdcore.Deps) (*cmdc
 	}
 
 	result, err := sandbox.Code.RunCode(ctx, codeStr, runConfig, nil)
+	err = output.WithContext(err, map[string]any{"Stage": "remote_execute", "Operation": "code.run", "InstanceId": instanceID})
 	if err != nil {
 		resolved.Cleanup(false)
 		return nil, fmt.Errorf("failed to execute code: %w", err)
@@ -228,7 +231,7 @@ func runCodeStreamNDJSON(ctx context.Context, deps cmdcore.Deps, opts codeOption
 		cliErr := cli.ClassifyCLIError(err)
 		resolved.CleanupForPreExecutionFailure()
 		_ = nw.WriteFailed(map[string]any{"ExecutionContext": resolved.ExecContext}, cliErr.Failure)
-		return &cmdcore.Result{StreamDone: true, ExitCode: cliErr.ExitCode}, nil
+		return &cmdcore.Result{StreamDone: true, ExitCode: cliErr.ExitCode, Cause: err}, nil
 	}
 	runConfig := &toolcode.RunCodeConfig{Language: opts.Language}
 	callbacks := &toolcode.OnOutputConfig{
@@ -236,11 +239,12 @@ func runCodeStreamNDJSON(ctx context.Context, deps cmdcore.Deps, opts codeOption
 		OnStderr: func(s string) { _ = nw.WriteStderr(s) },
 	}
 	result, err := sandbox.Code.RunCode(ctx, codeStr, runConfig, callbacks)
+	err = output.WithContext(err, map[string]any{"Stage": "remote_execute", "Operation": "code.run", "InstanceId": instanceID})
 	if err != nil {
 		cliErr := cli.ClassifyCLIError(err)
 		resolved.CleanupForPreExecutionFailure()
 		_ = nw.WriteFailed(map[string]any{"ExecutionContext": resolved.ExecContext}, cliErr.Failure)
-		return &cmdcore.Result{StreamDone: true, ExitCode: cliErr.ExitCode}, nil
+		return &cmdcore.Result{StreamDone: true, ExitCode: cliErr.ExitCode, Cause: err}, nil
 	}
 	if result.Error != nil {
 		resolved.Cleanup(false)
@@ -354,7 +358,7 @@ func resolveCodeInput(stdin io.Reader, codeFlag string, files []string) (string,
 	if stdin != nil {
 		data, err := io.ReadAll(stdin)
 		if err != nil {
-			return "", fmt.Errorf("failed to read from stdin: %w", err)
+			return "", output.WithContext(fmt.Errorf("failed to read from stdin: %w", err), map[string]any{"Stage": "request_input", "Field": "code", "Path": "stdin"})
 		}
 		return string(data), nil
 	}

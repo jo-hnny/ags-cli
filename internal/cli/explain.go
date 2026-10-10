@@ -99,6 +99,45 @@ func explainCodeData(code string) (ExplainData, bool) {
 		base.Meaning = "The command failed for a non-usage, non-auth reason."
 		base.AffectedCommands = allCommandNames()
 		base.Fix = []string{"Inspect Failure.Code, Failure.Kind, and Failure.Hint in -o json output.", "Run: agr doctor"}
+	case "INTERNAL_ERROR":
+		base.Kind = output.KindGenericError
+		base.ExitCode = output.ExitGenericError
+		base.Meaning = "The CLI could not classify the error. Optional Stage, Operation, Program, Path, Field or Endpoint details identify the observed boundary. The original cause is available in --debug stderr diagnostics; config parse errors retain safe locations instead of quoting unloaded credentials."
+		base.AffectedCommands = allCommandNames()
+		base.Fix = []string{"agr doctor", "Rerun with --debug to inspect the redacted error chain on stderr."}
+	case "NETWORK_ERROR", "DNS_ERROR":
+		base.Kind = output.KindNetwork
+		base.ExitCode = output.ExitNetwork
+		base.Meaning = "A network operation failed. Mobile tunnel handshakes report Failure.Details.Stage=websocket_handshake, Endpoint and TimeoutMs (budget, not elapsed time); HTTPStatus and an allowlisted RequestId are included only when observed."
+		base.AffectedCommands = allCommandNames()
+		base.Fix = []string{"Check the endpoint, network, DNS, and access credentials.", "Use --debug for the observed cause. A retry may repeat a business operation; check its outcome first."}
+	case "TUNNEL_START_FAILED", "TUNNEL_EXITED", "TUNNEL_PROTOCOL_ERROR", "TUNNEL_READY_TIMEOUT":
+		base.Kind = output.KindGenericError
+		base.ExitCode = output.ExitGenericError
+		if code == "TUNNEL_READY_TIMEOUT" {
+			base.Kind = output.KindTimeout
+		}
+		base.Meaning = "The background tunnel could not report readiness. Failure.Details.Stage identifies the observed start, exit, protocol, or wait boundary."
+		base.AffectedCommands = []string{"instance.mobile.connect"}
+		base.Fix = []string{"Inspect Failure.Details.LogPath when present; --debug includes a redacted tunnel log tail.", "Check the executable, local environment, and tunnel endpoint for the reported stage."}
+	case "PORT_IN_USE":
+		base.Kind = output.KindUsage
+		base.ExitCode = output.ExitUsage
+		base.Meaning = "The requested local tunnel port is already in use."
+		base.AffectedCommands = []string{"instance.mobile.tunnel", "instance.mobile.connect"}
+		base.Fix = []string{"Choose another --port or use --port 0."}
+	case "TUNNEL_AUTH_FAILED":
+		base.Kind = output.KindAuthOrPermission
+		base.ExitCode = output.ExitAuthOrPermission
+		base.Meaning = "The tunnel WebSocket handshake received HTTP 401 or 403. Failure.Details includes Endpoint and TimeoutMs; RequestId is included when a valid allowlisted response header is available."
+		base.AffectedCommands = []string{"instance.mobile.tunnel", "instance.mobile.connect"}
+		base.Fix = []string{"Check the tunnel access token and permissions, then reconnect."}
+	case "TUNNEL_ERROR":
+		base.Kind = output.KindGenericError
+		base.ExitCode = output.ExitGenericError
+		base.Meaning = "A local tunnel operation failed; the message retains the observed operation and reason."
+		base.AffectedCommands = []string{"instance.mobile.tunnel", "instance.mobile.connect"}
+		base.Fix = []string{"Inspect the reported operation and use --debug for its underlying cause."}
 	case "USAGE":
 		base.Kind = output.KindUsage
 		base.ExitCode = output.ExitUsage
@@ -216,6 +255,12 @@ func explainCodeData(code string) (ExplainData, bool) {
 			base.Meaning = "One or more request parameters are invalid or missing."
 			base.AffectedCommands = []string{}
 			base.Fix = []string{"Check the command flags or --request payload.", "agr schema <command> -o json"}
+		case code == "CLIENTERROR.NETWORKERROR":
+			base.Kind = output.KindNetwork
+			base.ExitCode = output.ExitNetwork
+			base.Meaning = "The CLI received no Tencent Cloud API response, for example because DNS failed, the connection was refused or the request timed out. Failure.Details includes Stage=http_request, Operation and Endpoint when available."
+			base.AffectedCommands = []string{}
+			base.Fix = []string{"Check network connectivity, proxy settings and cloud_endpoint (AGR_CLOUD_ENDPOINT).", "agr doctor", "The request may have reached the service; check the operation's outcome before retrying."}
 		default:
 			base.Kind = output.KindGenericError
 			base.ExitCode = output.ExitGenericError

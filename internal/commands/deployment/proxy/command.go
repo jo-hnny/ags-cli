@@ -3,6 +3,7 @@ package proxy
 import (
 	"context"
 	"fmt"
+	"log"
 	"net"
 	"os/signal"
 	"strconv"
@@ -57,7 +58,7 @@ Port syntax:
 		Examples: []string{
 			"Example - Forward the same local and remote port:\n  agr deployment proxy dpl-a1b2c3d4 8080",
 			"Example - Avoid a local port conflict:\n  agr deployment proxy dpl-a1b2c3d4 3000:8080",
-			"Example - Log proxied requests without printing credentials:\n  agr deployment proxy dpl-a1b2c3d4 3000:8080 --verbose",
+			"Example - Log proxied request paths without queries or access tokens:\n  agr deployment proxy dpl-a1b2c3d4 3000:8080 --verbose",
 			"Example - Resume a known affinity session:\n  agr deployment proxy dpl-a1b2c3d4 3000:8080 --affinity-id session-a1b2c3d4",
 		},
 		Args: []command.ArgSpec{
@@ -67,7 +68,7 @@ Port syntax:
 		Flags: []command.FlagSpec{
 			{Name: "address", Usage: "Local address to bind to", Type: command.FlagString, Default: "127.0.0.1"},
 			{Name: "affinity-id", Usage: "Initial affinity ID for a Deployment with affinity enabled", Type: command.FlagString},
-			{Name: "verbose", Usage: "Enable secret-safe request logging", Type: command.FlagBool},
+			{Name: "verbose", Usage: "Log request paths as-is; queries and access tokens are omitted", Type: command.FlagBool},
 		},
 	}
 	return command.Module{
@@ -151,6 +152,9 @@ func runProxy(ctx context.Context, req command.Request, deps command.Deps, cp Co
 		if err := apivalue.Project(value, &token); err != nil {
 			return nil, err
 		}
+		if token.Token != nil {
+			cli.MaskSecret(*token.Token)
+		}
 		return &token, nil
 	}, runtime.Now)
 	cfg := config.Get()
@@ -167,6 +171,7 @@ func runProxy(ctx context.Context, req command.Request, deps command.Deps, cp Co
 		}
 	}
 	proxy, err := runtime.NewProxy(dataplaneproxy.Options{
+		Logger:          log.New(cli.DiagnosticWriter(deps.IO.ErrOut), "", log.LstdFlags),
 		InstanceID:      deploymentID,
 		Domain:          domain,
 		RemotePort:      remotePort,

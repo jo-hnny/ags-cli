@@ -5,14 +5,62 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"net"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
+	"github.com/TencentCloudAgentRuntime/ags-cli/internal/client"
 	"github.com/TencentCloudAgentRuntime/ags-cli/internal/command"
 	"github.com/TencentCloudAgentRuntime/ags-cli/internal/dataplane/adbtunnel"
 	"github.com/TencentCloudAgentRuntime/ags-cli/internal/iostreams"
+	"github.com/TencentCloudAgentRuntime/ags-cli/internal/output"
+	sdkerrors "github.com/tencentcloud/tencentcloud-sdk-go/tencentcloud/common/errors"
 )
+
+func TestProbeFailureClassification(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		cause error
+		kind  string
+		code  string
+		exit  int
+	}{
+		{"auth", sdkerrors.NewTencentCloudSDKError("AuthFailure.Test", "denied", "req-test"), output.KindAuthOrPermission, "AuthFailure.Test", 4},
+		{"timeout", &adbtunnel.HandshakeError{Cause: context.DeadlineExceeded}, output.KindTimeout, "TIMEOUT", 1},
+		{"canceled", &adbtunnel.HandshakeError{Cause: context.Canceled}, output.KindGenericError, "CANCELED", 1},
+		{"handshake", &adbtunnel.HandshakeError{Cause: errors.New("bad handshake"), HTTPStatus: 502, Endpoint: "wss://endpoint.invalid/adb/ws", TimeoutMs: 10000, RequestID: "ws-req"}, output.KindNetwork, "NETWORK_ERROR", 1},
+		{"dns", &adbtunnel.HandshakeError{Cause: &net.DNSError{Err: "no such host", Name: "endpoint.invalid", IsNotFound: true}, Endpoint: "wss://endpoint.invalid/adb/ws", TimeoutMs: 10000}, output.KindNetwork, "DNS_ERROR", 1},
+		{"unauthorized", &adbtunnel.HandshakeError{Cause: errors.New("bad handshake"), HTTPStatus: 401}, output.KindAuthOrPermission, "TUNNEL_AUTH_FAILED", 4},
+		{"forbidden", &adbtunnel.HandshakeError{Cause: errors.New("bad handshake"), HTTPStatus: 403}, output.KindAuthOrPermission, "TUNNEL_AUTH_FAILED", 4},
+		{"token-client", errors.New("failed to create API client"), output.KindGenericError, "TUNNEL_ERROR", 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fake := &fakeTunnel{probeErr: tc.cause}
+			_, err := buildRuntime(t, &bytes.Buffer{}, fake, nil).Handler.Run(t.Context(), request(false, 0))
+			got := client.ClassifyError(err)
+			if got.Failure.Kind != tc.kind || got.Failure.Code != tc.code || got.ExitCode != tc.exit || !errors.Is(got, tc.cause) {
+				t.Fatalf("classification=%#v failure=%#v", got, got.Failure)
+			}
+			if tc.name == "handshake" && (got.Failure.Details["HTTPStatus"] != 502 || got.Failure.Details["Stage"] != "websocket_handshake") {
+				t.Fatalf("details=%#v", got.Failure.Details)
+			}
+			if tc.name == "handshake" && (got.Failure.Details["Endpoint"] != "wss://endpoint.invalid/adb/ws" || got.Failure.Details["TimeoutMs"] != int64(10000) || got.Failure.Details["RequestId"] != "ws-req") {
+				t.Fatalf("lost handshake context: %#v", got.Failure.Details)
+			}
+			if tc.name == "dns" && (got.Failure.Details["Stage"] != "websocket_handshake" || got.Failure.Details["HTTPStatus"] != nil || got.Failure.Details["RequestId"] != nil) {
+				t.Fatalf("invented DNS observations: %#v", got.Failure.Details)
+			}
+			if tc.name == "auth" && got.Failure.Details["RequestId"] != "req-test" {
+				t.Fatal("lost cloud RequestId")
+			}
+			if !fake.stopped {
+				t.Fatal("failed probe did not stop tunnel")
+			}
+		})
+	}
+}
 
 func TestModuleDescriptor(t *testing.T) {
 	module := Module()
@@ -41,7 +89,7 @@ func TestRunTunnelDaemonWritesReadyMessage(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Run returned error: %v", err)
 	}
-	var msg readyMessage
+	var msg adbtunnel.ReadyMessage
 	if err := json.Unmarshal(bytes.TrimSpace(out.Bytes()), &msg); err != nil {
 		t.Fatalf("ready json=%q err=%v", out.String(), err)
 	}
@@ -103,12 +151,16 @@ func request(daemon bool, port int) command.Request {
 
 type fakeTunnel struct {
 	addr     string
+	startErr error
 	probeErr error
 	stopped  bool
 	opts     adbtunnel.TunnelOptions
 }
 
 func (f *fakeTunnel) Start() (string, error) {
+	if f.startErr != nil {
+		return "", f.startErr
+	}
 	if f.addr == "" {
 		return "127.0.0.1:5555", nil
 	}
@@ -118,3 +170,65 @@ func (f *fakeTunnel) Start() (string, error) {
 func (f *fakeTunnel) Probe() error { return f.probeErr }
 
 func (f *fakeTunnel) Stop() { f.stopped = true }
+
+func TestTunnelStartupFailureClassification(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		fake   *fakeTunnel
+		newErr error
+		code   string
+		exit   int
+	}{
+		{"creation", &fakeTunnel{}, errors.New("missing tunnel configuration"), "TUNNEL_ERROR", 1},
+		{"port", &fakeTunnel{startErr: syscall.EADDRINUSE}, nil, "PORT_IN_USE", 2},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := buildRuntime(t, &bytes.Buffer{}, tc.fake, tc.newErr).Handler.Run(t.Context(), request(false, 5555))
+			got := client.ClassifyError(err)
+			if got.Failure.Code != tc.code || got.ExitCode != tc.exit || got.Failure.Message == "internal error" {
+				t.Fatalf("failure=%#v", got)
+			}
+			cause := tc.newErr
+			if cause == nil {
+				cause = tc.fake.startErr
+			}
+			if !errors.Is(err, cause) {
+				t.Fatal("lost cause")
+			}
+		})
+	}
+}
+
+func TestTunnelOccupiedPort(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := listener.Close(); err != nil {
+			t.Errorf("close listener: %v", err)
+		}
+	})
+	port := listener.Addr().(*net.TCPAddr).Port
+	rt := runtimeDeps(RuntimeDeps{ValidateConfig: func() error { return nil }})
+	_, err = runTunnel(t.Context(), request(false, port), command.Deps{IO: &iostreams.IOStreams{Out: &bytes.Buffer{}}}, rt)
+	got := client.ClassifyError(err)
+	if got.Failure.Code != "PORT_IN_USE" || got.ExitCode != 2 {
+		t.Fatalf("failure=%#v", got)
+	}
+}
+
+type failingReadyWriter struct{ err error }
+
+func (w failingReadyWriter) Write([]byte) (int, error) { return 0, w.err }
+
+func TestTunnelReadyWriteFailure(t *testing.T) {
+	cause := errors.New("output closed")
+	fake := &fakeTunnel{}
+	rt := runtimeDeps(RuntimeDeps{ValidateConfig: func() error { return nil }, NewTunnel: func(adbtunnel.TunnelOptions) (Tunnel, error) { return fake, nil }})
+	_, err := runTunnel(t.Context(), request(true, 0), command.Deps{IO: &iostreams.IOStreams{Out: failingReadyWriter{cause}}}, rt)
+	got := client.ClassifyError(err)
+	if got.Failure.Code != "TUNNEL_ERROR" || !strings.Contains(got.Failure.Message, "failed to write ready message: output closed") || !errors.Is(err, cause) || !fake.stopped {
+		t.Fatalf("error=%v stopped=%t", err, fake.stopped)
+	}
+}

@@ -3,7 +3,6 @@ package controlplane
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 
 	"github.com/TencentCloudAgentRuntime/ags-cli/internal/apimeta"
@@ -18,16 +17,13 @@ func (s *SDK) callDynamic(ctx context.Context, action string, request map[string
 	if err != nil {
 		return nil, err
 	}
+	diagnose := client.CloudCallContext(ctx, action)
 	result, err := (RawAPIClient{Sender: s.RawSender}).RawCall(ctx, action, raw)
 	if err != nil {
 		if ctx.Err() != nil {
-			return nil, ctx.Err()
+			return nil, diagnose(ctx.Err())
 		}
-		var sdkErr *sdkerrors.TencentCloudSDKError
-		if errors.As(err, &sdkErr) {
-			return nil, client.ClassifyCloudError(sdkErr)
-		}
-		return nil, output.ClassifyError(err)
+		return nil, client.ClassifyError(err)
 	}
 	envelope, err := apivalue.Decode(result.Response)
 	if err != nil {
@@ -38,7 +34,7 @@ func (s *SDK) callDynamic(ctx context.Context, action string, request map[string
 		return nil, fmt.Errorf("%s: response has no Response object", action)
 	}
 	if failure := response.Object("Error"); failure != nil {
-		return nil, client.ClassifyCloudError(sdkerrors.NewTencentCloudSDKError(failure.String("Code"), failure.String("Message"), response.String("RequestId")))
+		return nil, client.ClassifyCloudError(diagnose(sdkerrors.NewTencentCloudSDKError(failure.String("Code"), failure.String("Message"), response.String("RequestId"))))
 	}
 	if action == "StartSandboxInstance" {
 		instance := response.Object("Instance")

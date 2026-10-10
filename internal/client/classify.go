@@ -22,8 +22,9 @@ func ClassifyError(err error) *output.CLIError {
 	}
 
 	// If already classified, return directly.
-	if cliErr, ok := err.(*output.CLIError); ok {
-		return attachFix(cliErr)
+	var cliErr *output.CLIError
+	if errors.As(err, &cliErr) {
+		return attachFix(cliErr.WithCause(err))
 	}
 
 	// Check if it's a TencentCloud SDK error using errors.As (safe for

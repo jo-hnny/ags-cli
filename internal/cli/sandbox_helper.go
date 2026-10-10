@@ -14,6 +14,7 @@ import (
 
 	"github.com/TencentCloudAgentRuntime/ags-cli/internal/config"
 	"github.com/TencentCloudAgentRuntime/ags-cli/internal/dataplane/token"
+	"github.com/TencentCloudAgentRuntime/ags-cli/internal/output"
 	ags "github.com/tencentcloud/tencentcloud-sdk-go/tencentcloud/ags/v20250920"
 )
 
@@ -74,6 +75,7 @@ func acquireInstanceToken(ctx context.Context, instanceID string) (string, error
 	tokenCache, err := token.NewCache()
 	if err == nil {
 		if cachedToken, ok := tokenCache.Get(instanceID); ok && cachedToken != "" {
+			MaskSecret(cachedToken)
 			return cachedToken, nil
 		}
 	}
@@ -90,6 +92,7 @@ func acquireInstanceToken(ctx context.Context, instanceID string) (string, error
 		return "", err
 	}
 	accessToken := derefString(resp.Token)
+	MaskSecret(accessToken)
 
 	if tokenCache != nil {
 		_ = tokenCache.Set(instanceID, accessToken)
@@ -106,6 +109,7 @@ func GetCachedTokenOrAcquire(ctx context.Context, instanceID string) (string, er
 	}
 
 	if cachedToken, found := tokenCache.Get(instanceID); found {
+		MaskSecret(cachedToken)
 		return cachedToken, nil
 	}
 
@@ -132,5 +136,6 @@ func connectSandboxDefault(ctx context.Context, instanceID string) (*code.Sandbo
 
 // ConnectSandboxWithCache connects to an existing sandbox using cached token.
 func ConnectSandboxWithCache(ctx context.Context, instanceID string) (*code.Sandbox, error) {
-	return connectSandbox(ctx, instanceID)
+	sandbox, err := connectSandbox(ctx, instanceID)
+	return sandbox, output.WithContext(err, map[string]any{"Stage": "remote_connect", "InstanceId": instanceID})
 }

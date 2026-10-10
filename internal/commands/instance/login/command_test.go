@@ -186,6 +186,35 @@ func TestModuleRequiresControlPlane(t *testing.T) {
 	}
 }
 
+func TestLoginNonInteractiveIsUsage(t *testing.T) {
+	runtime, err := Module().Build(command.Deps{
+		ControlPlane: &fakeControlPlane{},
+		DataPlane:    RuntimeDeps{RequireTTY: func() error { return nil }, Interactive: func() bool { return false }},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = runtime.Handler.Run(t.Context(), command.Request{Args: []string{"ins-test"}})
+	var classified *output.CLIError
+	if !errors.As(err, &classified) || classified.Failure.Code != "TTY_REQUIRED" || classified.ExitCode != 2 {
+		t.Fatalf("error=%v", err)
+	}
+}
+
+func TestSessionClassificationRetainsCause(t *testing.T) {
+	for _, cause := range []error{context.Canceled, context.DeadlineExceeded, connect.NewError(connect.CodeInternal, errors.New("stream closed"))} {
+		if got := classifySessionError(cause); !errors.Is(got, cause) {
+			t.Fatalf("lost cause %v", cause)
+		}
+	}
+	cause := connect.NewError(connect.CodeInternal, errors.New("stream closed"))
+	original := output.NewConflictError("CUSTOM", "public failure", "hint").WithCause(cause)
+	got := classifySessionError(original).(*output.CLIError)
+	if got.Failure.Code != "CUSTOM" || !errors.Is(got, cause) {
+		t.Fatal("existing classification overwritten")
+	}
+}
+
 type fakeControlPlane struct {
 	instanceID string
 	instance   *ags.SandboxInstance

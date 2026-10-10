@@ -467,7 +467,8 @@ See `agr schema -o json --jq '.Data.ExitCodes'` for the full list.
 --token           Tencent Cloud STS session token
 --non-interactive Disable interactive behavior
 --no-color        Disable ANSI color
---debug           Write debug diagnostics to stderr
+--debug           Write debug diagnostics to stderr and full redacted logs locally
+--debug-log       Append debug logs to a specified file (enables --debug)
 ```
 
 Environment variables: `TENCENTCLOUD_SECRET_ID`, `TENCENTCLOUD_SECRET_KEY`, `TENCENTCLOUD_TOKEN`, `AGR_OUTPUT`, `AGR_REGION`, `AGR_CLOUD_ENDPOINT`, `AGR_DOMAIN`, `AGR_NON_INTERACTIVE`, `AGR_DEBUG`, `NO_COLOR`.
@@ -477,6 +478,105 @@ Environment variables: `TENCENTCLOUD_SECRET_ID`, `TENCENTCLOUD_SECRET_KEY`, `TEN
 Configuration priority: `--flag` > environment variable > `~/.agr/config.toml` > default. Use `agr status` to inspect resolved values and their sources.
 
 ## Troubleshooting
+
+Use `--debug` to write a bounded, redacted error chain to stderr. JSON stdout
+remains one envelope; NDJSON streams retain their single terminal event. Unknown
+errors still show `INTERNAL_ERROR` in normal output. No stack dump or upload is
+performed.
+
+Redaction replaces credential values only and never removes surrounding text,
+so the failure reason stays intact. It replaces, by exact value (raw and
+URL-encoded), the active SecretId/SecretKey/Token and the data-plane/deployment
+access tokens the CLI obtains; the credential after `Bearer`/`Basic` (16 or more
+characters); and URL passwords and signed URL query values. Other header values
+are not guessed from text.
+
+`--debug` (or `AGR_DEBUG=1`) also saves full redacted diagnostics and a copy of stderr to
+`~/.agr/logs/agr-<UTC timestamp>-<unique suffix>.log`. Use
+`--debug-log ./logs/agr.log` to enable debug and append to a specified file.
+Successful and failed commands print `Debug log: <absolute path>` to stderr;
+logging failures produce a warning without replacing the command's result or
+exit code.
+
+The copied stderr, including remote program output, is written in full with no
+line limit; only the known credential values above are replaced, wherever
+output chunks split them. Remote programs' own secrets are not known to the CLI
+and are not redacted, as with `kubectl logs`. The original program stderr still
+reaches the terminal immediately and unchanged.
+
+Default log files are created per process and are not automatically rotated or
+deleted. Background mobile tunnel processes follow the parent's effective debug
+setting (an explicit `--debug=false` overrides an inherited `AGR_DEBUG=1`) and,
+when enabled, create their own default log files; a `--debug-log` path is not
+shared with them.
+If output ends with a fragment that may start a known credential, that fragment
+is written as `[REDACTED]`. Remove old files when they are no longer needed.
+
+Redaction also applies to ordinary text errors and JSON/NDJSON `Failure` fields,
+including nested `Details`, without truncating ordinary error strings. Only
+terminal debug diagnostics are capped at 8 KiB plus a UTF-8-safe truncation marker.
+URL redaction changes only passwords and sensitive query values, even when
+unrelated URL escapes are malformed. `Details` fields named after credentials or
+headers (such as `Authorization`, `Cookie`, `SecretKey`) are replaced; generic
+`Details.token`/`signature`/`sig` fields are not hidden by name alone.
+
+For mobile tunnel failures, token acquisition retains cloud API
+classification and RequestId; timeouts and cancellations retain their own kinds.
+Handshake HTTP 401/403 uses `TUNNEL_AUTH_FAILED` (exit 4). A local port already
+in use returns `PORT_IN_USE` (exit 2); choose another port or `--port 0`. Other
+unclassified tunnel operations use `TUNNEL_ERROR` and retain the observed reason.
+Other WebSocket handshake failures use `NETWORK_ERROR` (exit 1), with optional
+`Failure.Details.Stage=websocket_handshake` and `HTTPStatus` when observed. These
+fields are described by `agr schema -o json` under `Data.FailureDetails` and by
+`agr explain NETWORK_ERROR`. Background `mobile connect` preserves the child's
+structured failure and exit code, including handshake status and cloud RequestId.
+When no valid child failure is available, it reports `TUNNEL_START_FAILED`,
+`TUNNEL_EXITED`, `TUNNEL_PROTOCOL_ERROR`, or `TUNNEL_READY_TIMEOUT` according to
+the observed startup stage. Cancellation and context deadlines retain their own
+classification; failed startup terminates and reaps the child with bounded waits.
+
+If a tunnel log was created, failures include `Failure.Details.LogPath` (also
+shown in text output). `--debug` is forwarded to the child and adds a separate
+`tunnel log tail:` section to parent stderr: at most 40 lines from the last
+64 KiB, capped to the last 8 KiB plus a truncation marker. Each tail line is
+prefixed with `  | ` and the section ends with `end of tunnel log tail`, so the
+child's own error output is not mistaken for the parent's. Tunnel log records
+are redacted and bounded before being written to disk; the tail is redacted
+again before display. A log creation failure does not change the underlying
+failure classification and does not return a nonexistent log path.
+
+Mobile WebSocket handshake diagnostics include `Endpoint` (without user info,
+query or fragment) and `TimeoutMs` (the effective handshake budget, not elapsed
+time). Probes use 10 seconds and runtime connections use 15 seconds; a shorter
+context deadline reduces that budget. The stage remains `websocket_handshake`,
+including DNS, connection and TLS failures: the CLI does not infer an internal
+network phase. HTTP status is omitted when no response was received. Request IDs
+are taken only from `X-TC-RequestId`, then `X-Request-Id`, with a 256-byte limit
+and printable ASCII excluding spaces. Other response headers and bodies are not
+retained. These observations apply to startup/recovery probes and runtime
+connection failures; startup failures also preserve them across background
+readiness. Token acquisition remains a separate error boundary.
+
+Other boundaries add optional `Stage` and `Operation`, plus `Program`, `Path`,
+`Field` or `InstanceId` where relevant. Text failures display available boundary
+metadata; JSON/NDJSON retain it in `Failure.Details`. File errors retain their OS
+cause. Configuration parse/decode failures report the file, the parser location
+and a value-free reason when available, such as the TOML syntax error or the field
+name with its expected type. Values from a config that has not loaded are never
+quoted; an offending input character is shown as `[REDACTED]`.
+Remote connection setup uses `remote_connect`; SDK execution failures use
+`remote_execute`, which does not prove whether the remote program started.
+PTY reports `remote_start` before its start event and `remote_stream` afterwards.
+Cloud SDK errors preserve Code/Message/RequestId and add the target/action and any
+known caller budget; unavailable HTTP status/headers are omitted. When no API
+response arrives, `ClientError.NetworkError` is classified as `Kind=network` but
+stays `Retryable=false`: the SDK does not say whether the request reached the
+service, so check the operation's outcome before retrying. Proxy HTTP/WS
+failures log observed response status and allowlisted IDs to redacted, bounded
+stderr diagnostics while preserving the proxied response and stream protocol.
+
+Remote programs returning nonzero exit codes keep their existing output and
+exit-code semantics. Diagnostic availability does not make retries safe to replay.
 
 ```bash
 agr status
