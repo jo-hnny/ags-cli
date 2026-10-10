@@ -133,7 +133,6 @@ func (p *Proxy) Start() (string, error) {
 		Scheme: "https",
 		Host:   p.targetHost,
 	}
-	// Application paths may carry credentials; diagnostics retain only the origin.
 	upstreamOrigin := targetURL.String()
 
 	reverseProxy := httputil.NewSingleHostReverseProxy(targetURL)
@@ -162,7 +161,7 @@ func (p *Proxy) Start() (string, error) {
 		p.applyAffinityHeader(req.Header, requestAffinityID(req.Context()))
 		p.normalizeOrigin(req.Header)
 		if p.options.Verbose {
-			p.logger.Printf("[HTTP] %s %s", req.Method, upstreamOrigin)
+			p.logger.Printf("[HTTP] %s %s", req.Method, req.URL.Path)
 		}
 	}
 	reverseProxy.ModifyResponse = func(response *http.Response) error {
@@ -172,7 +171,7 @@ func (p *Proxy) Start() (string, error) {
 			if response.StatusCode >= 500 {
 				level = "ERROR"
 			}
-			p.logger.Printf("[%s] Proxy upstream response: %v", level, output.HTTPContext(context.Background(), "http_response", upstreamOrigin, 0, response))
+			p.logger.Printf("[%s] Proxy upstream response: %v", level, output.HTTPContext(context.Background(), "http_response", p.diagnosticEndpoint(upstreamOrigin, response.Request.URL), 0, response))
 		}
 		return nil
 	}
@@ -181,7 +180,7 @@ func (p *Proxy) Start() (string, error) {
 	// to the client when verbose mode is enabled to avoid leaking internal
 	// host names or network topology to network-accessible clients.
 	reverseProxy.ErrorHandler = func(w http.ResponseWriter, r *http.Request, err error) {
-		p.logger.Printf("[ERROR] Proxy error: %v: %v", output.HTTPContext(context.Background(), "http_request", upstreamOrigin, 0, nil), err)
+		p.logger.Printf("[ERROR] Proxy error: %v: %v", output.HTTPContext(context.Background(), "http_request", p.diagnosticEndpoint(upstreamOrigin, r.URL), 0, nil), err)
 		w.WriteHeader(http.StatusBadGateway)
 		if p.options.Verbose {
 			fmt.Fprintf(w, "Bad Gateway: %v", err)
@@ -292,7 +291,7 @@ func (p *Proxy) handleWebSocket(w http.ResponseWriter, r *http.Request, upgrader
 		},
 	}
 
-	details := output.HTTPContext(p.ctx, "ws_handshake", upstreamOrigin, dialer.HandshakeTimeout, nil)
+	details := output.HTTPContext(p.ctx, "ws_handshake", p.diagnosticEndpoint(upstreamOrigin, r.URL), dialer.HandshakeTimeout, nil)
 	upstreamConn, upstreamResp, err := dialer.DialContext(p.ctx, upstreamURL, upstreamHeaders)
 	// Close the HTTP response body if present (dial failure with a non-101 HTTP response).
 	if upstreamResp != nil && upstreamResp.Body != nil {
@@ -344,7 +343,7 @@ func (p *Proxy) handleWebSocket(w http.ResponseWriter, r *http.Request, upgrader
 	defer func() { _ = clientConn.Close() }()
 
 	if p.options.Verbose {
-		p.logger.Printf("[WS] WebSocket connection established: %s", upstreamOrigin)
+		p.logger.Printf("[WS] WebSocket connection established: %s", r.URL.Path)
 	}
 
 	// Bridge the two WebSocket connections bidirectionally.
@@ -381,8 +380,17 @@ func (p *Proxy) handleWebSocket(w http.ResponseWriter, r *http.Request, upgrader
 	wg.Wait()
 	close(stopCh) // both bridges finished; stop the deadline-setter goroutine
 	if p.options.Verbose {
-		p.logger.Printf("[WS] WebSocket connection closed: %s", upstreamOrigin)
+		p.logger.Printf("[WS] WebSocket connection closed: %s", r.URL.Path)
 	}
+}
+
+// Application paths may carry credentials, so only explicitly requested verbose
+// diagnostics include them. Queries are never logged.
+func (p *Proxy) diagnosticEndpoint(origin string, requestURL *url.URL) string {
+	if p.options.Verbose {
+		return origin + requestURL.EscapedPath()
+	}
+	return origin
 }
 
 type requestTokenKey struct{}

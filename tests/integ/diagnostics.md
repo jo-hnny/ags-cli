@@ -193,6 +193,9 @@ HTTP proxy business responses (4xx) use `[HTTP]` only in verbose mode; 5xx alway
 use `[ERROR]`. Both retain
 observed status and allowlisted request IDs. Tests cover 401/404/503 with verbose
 on/off. WebSocket handshake rejection remains a connection failure with `[ERROR]`.
+Application paths may carry credentials, so proxy diagnostics record only the
+upstream origin by default. Verbose mode, which the user enables explicitly, adds
+the request path. Queries are never logged.
 
 Context collection supports joined/multiple-wrapped errors. Inner context wins
 within one chain, existing classified details remain authoritative, and the first

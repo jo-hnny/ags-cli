@@ -94,15 +94,26 @@ func TestRejectedUpstreamDiagnostics(t *testing.T) {
 							t.Fatalf("missing handshake budget: %s", text)
 						}
 					}
-					for _, want := range []string{fmt.Sprintf("HTTPStatus:%d", status), "RequestId:req-rejected", "Endpoint:https://", "Stage:" + stage} {
-						if ws && want == "Endpoint:https://" {
-							want = "Endpoint:wss://"
-						}
+					endpoint := "Endpoint:https://8080-ins-test.example.test"
+					if ws {
+						endpoint = "Endpoint:wss://8080-ins-test.example.test"
+					}
+					if verbose {
+						endpoint += "/reset/one-time-7f2c"
+					}
+					for _, want := range []string{fmt.Sprintf("HTTPStatus:%d", status), "RequestId:req-rejected", endpoint + " ", "Stage:" + stage} {
 						if strings.Contains(text, want) == quiet {
 							t.Fatalf("unexpected diagnostic presence for %s (quiet=%v): %s", want, quiet, text)
 						}
 					}
-					for _, secret := range []string{"one-time-7f2c", "query-secret", "private-response-body", "private-header", "test-token"} {
+					if verbose && !ws && !strings.Contains(text, "[HTTP] GET /reset/one-time-7f2c\n") {
+						t.Fatalf("verbose request line lost its path: %s", text)
+					}
+					secrets := []string{"query-secret", "private-response-body", "private-header", "test-token"}
+					if !verbose {
+						secrets = append(secrets, "one-time-7f2c")
+					}
+					for _, secret := range secrets {
 						if strings.Contains(text, secret) {
 							t.Fatalf("diagnostic contains %s: %s", secret, text)
 						}
@@ -153,17 +164,23 @@ func TestProxyTransportFailureDiagnostics(t *testing.T) {
 						t.Fatalf("HTTP status = %d", response.StatusCode)
 					}
 				}
-				stage, origin := "http_request", "https://8080-ins-test.example.test"
+				stage, endpoint := "http_request", "https://8080-ins-test.example.test"
 				if ws {
-					stage, origin = "ws_handshake", "wss://8080-ins-test.example.test"
+					stage, endpoint = "ws_handshake", "wss://8080-ins-test.example.test"
+				}
+				secrets := []string{"query-secret", "test-token"}
+				if verbose {
+					endpoint += "/reset/one-time-7f2c"
+				} else {
+					secrets = append(secrets, "one-time-7f2c")
 				}
 				text := logs.String()
-				for _, want := range []string{"Stage:" + stage, "Endpoint:" + origin, "upstream unavailable"} {
+				for _, want := range []string{"Stage:" + stage, "Endpoint:" + endpoint + " ", "upstream unavailable"} {
 					if !strings.Contains(text, want) {
 						t.Fatalf("missing %q: %s", want, text)
 					}
 				}
-				for _, secret := range []string{"one-time-7f2c", "query-secret", "test-token"} {
+				for _, secret := range secrets {
 					if strings.Contains(text, secret) {
 						t.Fatalf("diagnostic contains %s: %s", secret, text)
 					}
@@ -173,7 +190,7 @@ func TestProxyTransportFailureDiagnostics(t *testing.T) {
 	}
 }
 
-func TestWebSocketVerboseDiagnosticsOmitApplicationPath(t *testing.T) {
+func TestWebSocketVerboseDiagnosticsOmitQuery(t *testing.T) {
 	const requestURI = "/reset/one-time-7f2c?signature=query-secret"
 	requests := make(chan string, 1)
 	upstream := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -229,10 +246,10 @@ func TestWebSocketVerboseDiagnosticsOmitApplicationPath(t *testing.T) {
 		t.Fatal(err)
 	}
 	text := string(data)
-	if !strings.Contains(text, "WebSocket connection established: wss://8080-ins-test.example.test") {
-		t.Fatalf("missing connection origin: %s", text)
+	if !strings.Contains(text, "WebSocket connection established: /reset/one-time-7f2c\n") {
+		t.Fatalf("missing connection path: %s", text)
 	}
-	for _, secret := range []string{"one-time-7f2c", "query-secret", "test-token"} {
+	for _, secret := range []string{"query-secret", "test-token"} {
 		if strings.Contains(text, secret) {
 			t.Fatalf("persisted secret %q: %s", secret, text)
 		}
