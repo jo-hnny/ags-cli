@@ -272,7 +272,7 @@ func TestDaemonFailureProcess(t *testing.T) {
 					}
 				}
 				// Child debug lines in the separately labeled tail are not parent duplicates.
-				parent, _, _ := strings.Cut(stderr.String(), "tunnel log tail:")
+				parent := parentDiagnostics(t, stderr.String())
 				want := 0
 				if debug {
 					want = 1
@@ -292,6 +292,21 @@ func TestDaemonFailureProcess(t *testing.T) {
 			})
 		}
 	}
+}
+
+// parentDiagnostics removes the quoted tunnel log tail, which holds the child's
+// own diagnostics, and fails if the tail is not closed.
+func parentDiagnostics(t *testing.T, stderr string) string {
+	t.Helper()
+	before, tail, found := strings.Cut(stderr, "tunnel log tail:\n")
+	if !found {
+		return stderr
+	}
+	_, after, closed := strings.Cut(tail, "end of tunnel log tail\n")
+	if !closed {
+		t.Fatalf("unclosed tunnel log tail: %s", stderr)
+	}
+	return before + after
 }
 
 func TestDaemonTextAndSuccessProcess(t *testing.T) {
@@ -318,8 +333,8 @@ func TestDaemonTextAndSuccessProcess(t *testing.T) {
 			if !errors.As(err, &exit) || exit.ExitCode() != tc.exit || stdout.Len() != 0 {
 				t.Fatalf("exit=%v stdout=%s stderr=%s", err, &stdout, &stderr)
 			}
-			parent, _, _ := strings.Cut(stderr.String(), "tunnel log tail:")
-			if strings.Count(parent, "Debug: error=") != 1 || !strings.Contains(stderr.String(), "Code: TUNNEL_AUTH_FAILED") || !strings.Contains(stderr.String(), "LogPath:") {
+			parent := parentDiagnostics(t, stderr.String())
+			if strings.Count(parent, "Debug: error=") != 1 || strings.Count("\n"+parent, "\nError: ") != 1 || !strings.Contains(parent, "Code: TUNNEL_AUTH_FAILED") || !strings.Contains(parent, "LogPath:") {
 				t.Fatalf("stderr=%s", stderr.String())
 			}
 		})

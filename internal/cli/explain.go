@@ -255,6 +255,12 @@ func explainCodeData(code string) (ExplainData, bool) {
 			base.Meaning = "One or more request parameters are invalid or missing."
 			base.AffectedCommands = []string{}
 			base.Fix = []string{"Check the command flags or --request payload.", "agr schema <command> -o json"}
+		case code == "CLIENTERROR.NETWORKERROR":
+			base.Kind = output.KindNetwork
+			base.ExitCode = output.ExitNetwork
+			base.Meaning = "The CLI received no Tencent Cloud API response, for example because DNS failed, the connection was refused or the request timed out. Failure.Details includes Stage=http_request, Operation and Endpoint when available."
+			base.AffectedCommands = []string{}
+			base.Fix = []string{"Check network connectivity, proxy settings and cloud_endpoint (AGR_CLOUD_ENDPOINT).", "agr doctor", "The request may have reached the service; check the operation's outcome before retrying."}
 		default:
 			base.Kind = output.KindGenericError
 			base.ExitCode = output.ExitGenericError

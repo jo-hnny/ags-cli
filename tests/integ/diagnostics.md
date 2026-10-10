@@ -139,8 +139,13 @@ TimeoutMs and RequestId are missing.
   upload/download usage errors no longer discard causes. A failed download to
   stdout returns the read/write failure instead of reporting success.
 - Configuration read errors retain OS causes. Parse/decode errors retain safe
-  path/location metadata; raw parser input is deliberately not retained because
-  unloaded credential values are not yet registered with the redactor.
+  path/location metadata and a value-free reason: the TOML syntax message with
+  wrapped causes dropped and input characters redacted, or the field name with
+  its expected and actual types. Raw parser input is deliberately not retained
+  because unloaded credential values are not yet registered with the redactor.
+  Tests cover string, character, numeric and type errors with a credential-like
+  value and fail if either the character redaction or the cause truncation is
+  removed.
 - Exec/code, file transfer and webshell SDK errors carry remote_execute and the
   operation/instance. Connection preparation carries remote_connect. PTY uses
   local_terminal, remote_start and remote_stream based on observed progress.

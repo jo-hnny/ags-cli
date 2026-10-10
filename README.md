@@ -538,7 +538,9 @@ classification; failed startup terminates and reaps the child with bounded waits
 If a tunnel log was created, failures include `Failure.Details.LogPath` (also
 shown in text output). `--debug` is forwarded to the child and adds a separate
 `tunnel log tail:` section to parent stderr: at most 40 lines from the last
-64 KiB, capped to the last 8 KiB plus a truncation marker. Tunnel log records
+64 KiB, capped to the last 8 KiB plus a truncation marker. Each tail line is
+prefixed with `  | ` and the section ends with `end of tunnel log tail`, so the
+child's own error output is not mistaken for the parent's. Tunnel log records
 are redacted and bounded before being written to disk; the tail is redacted
 again before display. A log creation failure does not change the underlying
 failure classification and does not return a nonexistent log path.
@@ -558,13 +560,18 @@ readiness. Token acquisition remains a separate error boundary.
 Other boundaries add optional `Stage` and `Operation`, plus `Program`, `Path`,
 `Field` or `InstanceId` where relevant. Text failures display available boundary
 metadata; JSON/NDJSON retain it in `Failure.Details`. File errors retain their OS
-cause. Configuration parse/decode failures report the file and parser location
-when available, without quoting values from a config that has not loaded.
+cause. Configuration parse/decode failures report the file, the parser location
+and a value-free reason when available, such as the TOML syntax error or the field
+name with its expected type. Values from a config that has not loaded are never
+quoted; an offending input character is shown as `[REDACTED]`.
 Remote connection setup uses `remote_connect`; SDK execution failures use
 `remote_execute`, which does not prove whether the remote program started.
 PTY reports `remote_start` before its start event and `remote_stream` afterwards.
 Cloud SDK errors preserve Code/Message/RequestId and add the target/action and any
-known caller budget; unavailable HTTP status/headers are omitted. Proxy HTTP/WS
+known caller budget; unavailable HTTP status/headers are omitted. When no API
+response arrives, `ClientError.NetworkError` is classified as `Kind=network` but
+stays `Retryable=false`: the SDK does not say whether the request reached the
+service, so check the operation's outcome before retrying. Proxy HTTP/WS
 failures log observed response status and allowlisted IDs to redacted, bounded
 stderr diagnostics while preserving the proxied response and stream protocol.
 

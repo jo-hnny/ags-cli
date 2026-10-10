@@ -54,6 +54,11 @@ func ClassifyCloudError(err error) (result error) {
 		return newCloudCLIError(output.KindUsage, code, msg, "Check the command flags or request payload and try again.", false, requestID)
 	case code == "RequestLimitExceeded":
 		return newCloudCLIError(output.KindRateLimit, code, msg, "Safe to retry after a brief wait.", true, requestID)
+	case code == "ClientError.NetworkError":
+		// The SDK discards the transport error, so a refused connection cannot be
+		// told apart from a request that reached the service before timing out.
+		return newCloudCLIError(output.KindNetwork, code, msg,
+			"Check network connectivity, proxy settings and cloud_endpoint. The request may have reached the service; check the operation's outcome before retrying.", false, requestID)
 	default:
 		return newCloudCLIError(output.KindGenericError, code, msg, "Run 'agr doctor' to diagnose configuration and connectivity.", false, requestID)
 	}
