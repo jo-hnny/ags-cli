@@ -39,9 +39,15 @@ Session lifecycle and EventCount scenarios run against both candidate channels
 with deterministic fixtures and resource cleanup assertions. These are local
 integration tests, not live-service evidence.
 
-## Live verification (ap-chongqing)
+JSON request and field-flag input failures retain their original error causes
+and diagnostic context: request-input/parse stage, input field, and file or stdin
+location where observed. Regression tests cover missing files, stdin read errors,
+malformed JSON through inline/file/stdin inputs, and empty stdin while preserving
+usage error codes and exit status.
 
-The current stable candidate passed Registry CUSTOM/manual MCP/A2A lifecycle
+## Historical live verification (2026-09-29, ap-chongqing)
+
+The stable candidate tested before the diagnostics merge passed Registry CUSTOM/manual MCP/A2A lifecycle
 (45 CLI calls), Skill package/inline lifecycle (13 calls), and Session lifecycle
 (58 calls) against the real service. Remote MCP/A2A changed/failed sync passed
 on rerun (25 calls); the first run returned InternalError from A2A preview.
@@ -51,8 +57,9 @@ was confirmed.
 The separate EventCount check remains failing: after appending one or two events,
 DescribeSession returns EventCount=0 while DescribeSessions and DescribeEvents
 return the correct counts. A repeat after five seconds gave the same result.
-This is accepted as a known backend issue outside this CLI change; the assertion
-is retained and its failure is not presented as a pass.
+This remains a known backend issue tracked by #135; the assertion is retained
+and its failure is not presented as a pass. A passing result or explicit contract
+decision is still needed to complete that acceptance criterion.
 
 These runs used the uncommitted candidate, not a strict committed-head report.
 Pre-cache image task creation was not tested against the real service; its new

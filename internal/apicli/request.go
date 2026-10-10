@@ -54,7 +54,7 @@ func (JSONRequestSource) Read(req command.Request) (map[string]any, bool, error)
 			"INVALID_REQUEST_JSON",
 			fmt.Sprintf("invalid JSON in --request: %v", err),
 			"Provide a valid JSON object as --request.",
-		)
+		).WithCause(output.WithContext(err, map[string]any{"Stage": "request_parse", "Field": "request"}))
 	}
 	out, ok := decoded.(map[string]any)
 	if !ok {

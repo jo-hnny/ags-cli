@@ -1,4 +1,4 @@
-// Package registry tests the preview-only Registry contract through real binaries.
+// Package registry tests the stable and preview Registry contracts through real binaries.
 // The server is a serialization fixture, not evidence of cloud service acceptance.
 package registry
 

@@ -82,7 +82,7 @@ func runSessionLifecycle(s *patchtest.Session) error {
 	name := fmt.Sprintf("agr-session-e2e-%d", time.Now().UnixNano())
 	// Only ordinary session state is used: user:-scoped state outlives a session
 	// and has no public cleanup API.
-	space, err := sessionCall(s, ctx, "session-space.create", map[string]any{"Name": name, "Description": "CLI preview lifecycle", "Tags": []any{map[string]any{"Key": "agr-e2e", "Value": "session"}}})
+	space, err := sessionCall(s, ctx, "session-space.create", map[string]any{"Name": name, "Description": "CLI session lifecycle", "Tags": []any{map[string]any{"Key": "agr-e2e", "Value": "session"}}})
 	spaceID := sessionString(sessionObject(space.Data["SessionSpace"]), "SpaceId")
 	spaceDeleted := false
 	if spaceID != "" {
